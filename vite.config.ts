@@ -150,9 +150,18 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+export default defineConfig(({ command }) => {
+  // Manus editor/telemetry plugins are dev-only: in production they injected a
+  // ~360 KB inline runtime script and per-element source-location attributes,
+  // bloating every page load with no end-user value.
+  const isDev = command === "serve";
+  const plugins = [
+    react(),
+    tailwindcss(),
+    ...(isDev ? [jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()] : []),
+  ];
 
-export default defineConfig({
+  return {
   plugins,
   resolve: {
     alias: {
@@ -184,4 +193,5 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+  };
 });
