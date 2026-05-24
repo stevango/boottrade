@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1779641468624,
+      "tag": "0000_many_gorgon",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1779641642353,
+      "tag": "0001_romantic_black_bird",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1779643868775,
+      "tag": "0002_futuristic_mysterio",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1779645155550,
+      "tag": "0003_vengeful_white_queen",
+      "breakpoints": true
+    }
+  ]
+}
