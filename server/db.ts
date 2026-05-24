@@ -567,3 +567,92 @@ export async function syncBrokerConnection(userId: number, id: number) {
   }, 3000);
   return { success: true };
 }
+
+// Paper Trade (virtual simulator) — persists to the shared `trades` table with
+// isPaperTrade = true so it stays isolated from real trades.
+export const PAPER_START_CAPITAL = 100000;
+
+type Market = "dolar" | "acoes" | "daytrade" | "cripto" | "apostas" | "forex" | "indices";
+
+export async function getPaperTrades(userId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(trades)
+    .where(and(eq(trades.userId, userId), eq(trades.isPaperTrade, true)))
+    .orderBy(desc(trades.openedAt))
+    .limit(limit);
+}
+
+export async function getPaperStats(userId: number) {
+  const startCapital = PAPER_START_CAPITAL;
+  const empty = { startCapital, equity: startCapital, realizedPnl: 0, todayPnl: 0, openCount: 0, closedCount: 0, winRate: null as number | null, totalTrades: 0 };
+  const db = await getDb();
+  if (!db) return empty;
+
+  const rows = await db.select().from(trades)
+    .where(and(eq(trades.userId, userId), eq(trades.isPaperTrade, true)));
+  const closed = rows.filter(t => t.status === "closed");
+  const open = rows.filter(t => t.status === "open");
+  const realizedPnl = closed.reduce((s, t) => s + parseFloat(String(t.profit || "0")), 0);
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayPnl = closed
+    .filter(t => t.closedAt && new Date(t.closedAt) >= startOfToday)
+    .reduce((s, t) => s + parseFloat(String(t.profit || "0")), 0);
+
+  const wins = closed.filter(t => parseFloat(String(t.profit || "0")) > 0).length;
+  const winRate = closed.length > 0 ? (wins / closed.length) * 100 : null;
+
+  return { startCapital, equity: startCapital + realizedPnl, realizedPnl, todayPnl, openCount: open.length, closedCount: closed.length, winRate, totalTrades: rows.length };
+}
+
+export async function openPaperTrade(userId: number, data: {
+  asset: string; market: Market; type: "buy" | "sell"; quantity: number; entryPrice: number; stopLoss?: number; takeProfit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.insert(trades).values({
+    userId,
+    asset: data.asset,
+    market: data.market,
+    type: data.type,
+    quantity: data.quantity.toString(),
+    entryPrice: data.entryPrice.toString(),
+    isPaperTrade: true,
+    status: "open",
+    stopLoss: data.stopLoss != null ? data.stopLoss.toString() : null,
+    takeProfit: data.takeProfit != null ? data.takeProfit.toString() : null,
+  });
+  return { success: true };
+}
+
+export async function closePaperTrade(userId: number, id: number, exitPrice: number) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  const res = await db.select().from(trades)
+    .where(and(eq(trades.id, id), eq(trades.userId, userId), eq(trades.isPaperTrade, true)))
+    .limit(1);
+  const t = res[0];
+  if (!t || t.status !== "open") return { success: false };
+
+  const entry = parseFloat(String(t.entryPrice || "0"));
+  const qty = parseFloat(String(t.quantity || "0"));
+  const direction = t.type === "buy" ? 1 : -1;
+  const profit = (exitPrice - entry) * qty * direction;
+
+  await db.update(trades).set({
+    exitPrice: exitPrice.toString(),
+    profit: profit.toString(),
+    status: "closed",
+    closedAt: new Date(),
+  }).where(and(eq(trades.id, id), eq(trades.userId, userId)));
+  return { success: true, profit };
+}
+
+export async function resetPaperTrades(userId: number) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.delete(trades).where(and(eq(trades.userId, userId), eq(trades.isPaperTrade, true)));
+  return { success: true };
+}

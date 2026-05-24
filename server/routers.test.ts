@@ -310,3 +310,45 @@ describe("brokers router", () => {
     await expect(caller.brokers.sync({ id: 1 })).rejects.toThrow();
   });
 });
+
+describe("paper router", () => {
+  it("paper.list requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.paper.list()).rejects.toThrow();
+  });
+
+  it("paper.stats returns the virtual-account shape for an authenticated user", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.paper.stats();
+    expect(result.startCapital).toBe(100000);
+    expect(result.equity).toBe(100000);
+    expect(result.openCount).toBe(0);
+  });
+
+  it("paper.open requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.paper.open({ asset: "WINFUT", market: "dolar", type: "buy", quantity: 1, entryPrice: 100 })
+    ).rejects.toThrow();
+  });
+
+  it("paper.open rejects non-positive quantity and price", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.paper.open({ asset: "WINFUT", market: "dolar", type: "buy", quantity: -1, entryPrice: 100 })
+    ).rejects.toThrow();
+    await expect(
+      caller.paper.open({ asset: "WINFUT", market: "dolar", type: "buy", quantity: 1, entryPrice: 0 })
+    ).rejects.toThrow();
+  });
+
+  it("paper.close requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.paper.close({ id: 1, exitPrice: 100 })).rejects.toThrow();
+  });
+});

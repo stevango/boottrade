@@ -12,7 +12,8 @@ import {
   updateFinancialGoal, getAiConversation, saveAiConversation,
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
-  getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection
+  getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
+  getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { rateLimit } from "./rateLimit";
@@ -290,6 +291,36 @@ export const appRouter = router({
   admin: router({
     users: adminProcedure.query(async () => {
       return getAllUsers();
+    }),
+  }),
+
+  paper: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return getPaperTrades(ctx.user.id);
+    }),
+    stats: protectedProcedure.query(async ({ ctx }) => {
+      return getPaperStats(ctx.user.id);
+    }),
+    open: protectedProcedure
+      .input(z.object({
+        asset: z.string().min(1).max(50),
+        market: z.enum(["dolar", "acoes", "daytrade", "cripto", "apostas", "forex", "indices"]),
+        type: z.enum(["buy", "sell"]),
+        quantity: z.number().positive(),
+        entryPrice: z.number().positive(),
+        stopLoss: z.number().positive().optional(),
+        takeProfit: z.number().positive().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return openPaperTrade(ctx.user.id, input);
+      }),
+    close: protectedProcedure
+      .input(z.object({ id: z.number(), exitPrice: z.number().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        return closePaperTrade(ctx.user.id, input.id, input.exitPrice);
+      }),
+    reset: protectedProcedure.mutation(async ({ ctx }) => {
+      return resetPaperTrades(ctx.user.id);
     }),
   }),
 
