@@ -3,15 +3,23 @@ import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
 import { Bot, TrendingUp, Shield, Zap, BarChart3, Users, ArrowRight, CheckCircle } from "lucide-react";
 import { useLocation } from "wouter";
+import { useEffect } from "react";
 
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
 
-  if (isAuthenticated) {
-    navigate("/dashboard");
-    return null;
-  }
+  // Redirect signed-in users to the dashboard. Navigation must run as an
+  // effect, never during render.
+  useEffect(() => {
+    if (isAuthenticated) navigate("/dashboard");
+  }, [isAuthenticated, navigate]);
+
+  if (isAuthenticated) return null;
+
+  const scrollToRobots = () => {
+    document.getElementById("robots")?.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -57,7 +65,7 @@ export default function Home() {
               >
                 Começar Agora <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
-              <Button size="lg" variant="outline" className="px-8 h-12 text-base border-border hover:bg-secondary">
+              <Button size="lg" variant="outline" onClick={scrollToRobots} className="px-8 h-12 text-base border-border hover:bg-secondary">
                 Ver Demonstração
               </Button>
             </div>
@@ -136,7 +144,7 @@ export default function Home() {
       </section>
 
       {/* Robots Section */}
-      <section className="py-20 border-t border-border/50">
+      <section id="robots" className="py-20 border-t border-border/50 scroll-mt-16">
         <div className="container">
           <div className="text-center mb-16">
             <h2 className="text-3xl font-bold text-foreground mb-4">Robôs Especialistas</h2>

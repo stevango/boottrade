@@ -550,15 +550,20 @@ export async function syncBrokerConnection(userId: number, id: number) {
   await db.update(brokerConnections)
     .set({ status: "syncing", lastSync: new Date() })
     .where(and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId)));
-  // In production, this would trigger actual API sync with the broker
-  // For now, mark as connected after "sync"
-  setTimeout(async () => {
-    const db2 = await getDb();
-    if (db2) {
-      await db2.update(brokerConnections)
-        .set({ status: "connected" })
-        .where(eq(brokerConnections.id, id));
-    }
+  // Placeholder for real broker API sync. The deferred update is wrapped so a
+  // failure can never surface as an unhandled rejection that crashes the process.
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const db2 = await getDb();
+        if (!db2) return;
+        await db2.update(brokerConnections)
+          .set({ status: "connected" })
+          .where(and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId)));
+      } catch (error) {
+        console.error("[Broker] Deferred sync update failed:", error);
+      }
+    })();
   }, 3000);
   return { success: true };
 }
