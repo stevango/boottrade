@@ -199,7 +199,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Robôs Ativos</p>
-                  <p className="text-2xl font-bold text-foreground">{activeRobots || 5}</p>
+                  <p className="text-2xl font-bold text-foreground">{activeRobots}</p>
                   <div className="flex items-center gap-1 mt-1">
                     <Activity className="w-3 h-3 text-primary" />
                     <span className="text-xs text-muted-foreground">{robots?.length || 0} cadastrados</span>
@@ -320,7 +320,7 @@ export default function Dashboard() {
                   { label: "Resultado Mensal", value: `${dailyResult.value >= 0 ? "+" : ""}R$ ${(dailyResult.value * 22).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, positive: dailyResult.value >= 0 },
                   { label: "IA Score", value: "8.7/10", positive: true },
                   { label: "Max Drawdown", value: "-5.2%", positive: false },
-                  { label: "Robôs Ativos", value: `${activeRobots || 5}`, positive: true },
+                  { label: "Robôs Ativos", value: `${activeRobots}`, positive: true },
                 ].map((metric) => (
                   <div key={metric.label} className="p-3 rounded-lg bg-secondary/50">
                     <p className="text-xs text-muted-foreground">{metric.label}</p>
