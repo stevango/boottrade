@@ -99,6 +99,16 @@ export async function getRobotById(id: number) {
   return result[0];
 }
 
+// Trades the user ran on a specific robot (real, not paper).
+export async function getRobotTrades(userId: number, robotId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(trades)
+    .where(and(eq(trades.userId, userId), eq(trades.robotId, robotId)))
+    .orderBy(desc(trades.openedAt))
+    .limit(limit);
+}
+
 // Robot Brain queries
 export async function getRobotBrain(userId: number, robotId: number) {
   const db = await getDb();

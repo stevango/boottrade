@@ -4,7 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import {
-  getAllRobots, getRobotById, getUserTrades, getUserBacktests,
+  getAllRobots, getRobotById, getRobotTrades, getUserTrades, getUserBacktests,
   getUserRiskSettings, getMarketplaceListings, getSocialFeed, getAllUsers,
   getRobotBrain, getBrainDecisions, getPortfolioAssets, getFinancialGoals,
   getDailyPnl, upsertRobotBrain, addBrainDecision, addPortfolioAsset,
@@ -37,6 +37,11 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         return getRobotById(input.id);
+      }),
+    trades: protectedProcedure
+      .input(z.object({ robotId: z.number(), limit: z.number().optional() }))
+      .query(async ({ ctx, input }) => {
+        return getRobotTrades(ctx.user.id, input.robotId, input.limit ?? 100);
       }),
   }),
 
