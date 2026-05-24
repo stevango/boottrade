@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e56b6952-c794-4cef-a0f9-07ec719cd4a8",
-  "prevId": "d4871cd6-c8d8-48e7-bcc3-f61cdeb652b7",
+  "id": "d13def81-77dc-4190-a9dc-07891472ee56",
+  "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "ai_conversations": {
       "name": "ai_conversations",
