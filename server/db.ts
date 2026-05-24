@@ -89,7 +89,7 @@ export async function getUserByOpenId(openId: string) {
 export async function getAllRobots() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(robots).orderBy(desc(robots.iaScore));
+  return db.select().from(robots).orderBy(desc(robots.iaScore)).limit(200);
 }
 
 export async function getRobotById(id: number) {
@@ -325,7 +325,7 @@ export async function getDailyPnl(userId: number, robotId?: number, days = 30) {
 export async function getUserBacktests(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(backtests).where(eq(backtests.userId, userId)).orderBy(desc(backtests.createdAt));
+  return db.select().from(backtests).where(eq(backtests.userId, userId)).orderBy(desc(backtests.createdAt)).limit(100);
 }
 
 // Risk settings
@@ -362,7 +362,7 @@ export async function updateRiskSettings(userId: number, data: any) {
 export async function getPortfolioAssets(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(portfolioAssets).where(eq(portfolioAssets.userId, userId)).orderBy(desc(portfolioAssets.currentValue));
+  return db.select().from(portfolioAssets).where(eq(portfolioAssets.userId, userId)).orderBy(desc(portfolioAssets.currentValue)).limit(500);
 }
 
 export async function addPortfolioAsset(userId: number, data: any) {
@@ -419,7 +419,7 @@ export async function deletePortfolioAsset(userId: number, id: number) {
 export async function getFinancialGoals(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(financialGoals).where(eq(financialGoals.userId, userId)).orderBy(desc(financialGoals.createdAt));
+  return db.select().from(financialGoals).where(eq(financialGoals.userId, userId)).orderBy(desc(financialGoals.createdAt)).limit(200);
 }
 
 export async function addFinancialGoal(userId: number, data: any) {
@@ -489,7 +489,7 @@ export async function saveAiConversation(userId: number, conversationId: number,
 export async function getMarketplaceListings() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(marketplaceListings).where(eq(marketplaceListings.isActive, true)).orderBy(desc(marketplaceListings.totalSubscribers));
+  return db.select().from(marketplaceListings).where(eq(marketplaceListings.isActive, true)).orderBy(desc(marketplaceListings.totalSubscribers)).limit(200);
 }
 
 // Social posts
@@ -503,7 +503,7 @@ export async function getSocialFeed(limit = 20) {
 export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users).orderBy(desc(users.createdAt));
+  return db.select().from(users).orderBy(desc(users.createdAt)).limit(1000);
 }
 
 // Broker Connections

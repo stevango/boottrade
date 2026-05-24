@@ -29,6 +29,13 @@
       "when": 1779645155550,
       "tag": "0003_vengeful_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1779648741788,
+      "tag": "0004_natural_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,7 @@ import {
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection
 } from "./db";
 import { invokeLLM } from "./_core/llm";
+import { rateLimit } from "./rateLimit";
 
 export const appRouter = router({
   system: systemRouter,
@@ -213,11 +214,13 @@ export const appRouter = router({
   ai: router({
     chat: protectedProcedure
       .input(z.object({
-        message: z.string(),
+        message: z.string().min(1).max(2000),
         context: z.enum(["consultor", "auditor", "mercado", "operacao"]).optional(),
         conversationId: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        // Cap LLM spend: 15 messages/minute per user.
+        rateLimit(`ai.chat:${ctx.user.id}`, 15, 60_000);
         // Fetch user's real data for context
         const portfolioData = await getPortfolioSummary(ctx.user.id);
         const tradesData = await getTradesSummary(ctx.user.id);

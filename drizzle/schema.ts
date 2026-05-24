@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, index } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -39,7 +39,10 @@ export const robots = mysqlTable("robots", {
   creatorId: int("creatorId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  marketIdx: index("robots_market_idx").on(t.market),
+  iaScoreIdx: index("robots_iaScore_idx").on(t.iaScore),
+}));
 
 export const userRobots = mysqlTable("user_robots", {
   id: int("id").autoincrement().primaryKey(),
@@ -50,7 +53,10 @@ export const userRobots = mysqlTable("user_robots", {
   currentReturn: decimal("currentReturn", { precision: 15, scale: 2 }).default("0.00"),
   startedAt: timestamp("startedAt").defaultNow().notNull(),
   stoppedAt: timestamp("stoppedAt"),
-});
+}, (t) => ({
+  userIdx: index("user_robots_userId_idx").on(t.userId),
+  robotIdx: index("user_robots_robotId_idx").on(t.robotId),
+}));
 
 export const trades = mysqlTable("trades", {
   id: int("id").autoincrement().primaryKey(),
@@ -69,7 +75,9 @@ export const trades = mysqlTable("trades", {
   takeProfit: decimal("takeProfit", { precision: 15, scale: 6 }),
   openedAt: timestamp("openedAt").defaultNow().notNull(),
   closedAt: timestamp("closedAt"),
-});
+}, (t) => ({
+  userOpenedIdx: index("trades_userId_openedAt_idx").on(t.userId, t.openedAt),
+}));
 
 export const backtests = mysqlTable("backtests", {
   id: int("id").autoincrement().primaryKey(),
@@ -90,7 +98,9 @@ export const backtests = mysqlTable("backtests", {
   status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
   results: json("results"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  userCreatedIdx: index("backtests_userId_createdAt_idx").on(t.userId, t.createdAt),
+}));
 
 export const riskSettings = mysqlTable("risk_settings", {
   id: int("id").autoincrement().primaryKey(),
@@ -104,7 +114,9 @@ export const riskSettings = mysqlTable("risk_settings", {
   autoStopEnabled: boolean("autoStopEnabled").default(true),
   alertsEnabled: boolean("alertsEnabled").default(true),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userIdx: index("risk_settings_userId_idx").on(t.userId),
+}));
 
 export const marketplaceListings = mysqlTable("marketplace_listings", {
   id: int("id").autoincrement().primaryKey(),
@@ -119,7 +131,10 @@ export const marketplaceListings = mysqlTable("marketplace_listings", {
   totalSubscribers: int("totalSubscribers").default(0),
   isActive: boolean("isActive").default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  activeIdx: index("marketplace_listings_isActive_idx").on(t.isActive),
+  robotIdx: index("marketplace_listings_robotId_idx").on(t.robotId),
+}));
 
 export const socialPosts = mysqlTable("social_posts", {
   id: int("id").autoincrement().primaryKey(),
@@ -129,7 +144,10 @@ export const socialPosts = mysqlTable("social_posts", {
   likes: int("likes").default(0),
   comments: int("comments").default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  createdIdx: index("social_posts_createdAt_idx").on(t.createdAt),
+  userIdx: index("social_posts_userId_idx").on(t.userId),
+}));
 
 export const copyTrades = mysqlTable("copy_trades", {
   id: int("id").autoincrement().primaryKey(),
@@ -139,7 +157,10 @@ export const copyTrades = mysqlTable("copy_trades", {
   allocatedAmount: decimal("allocatedAmount", { precision: 15, scale: 2 }).default("0.00"),
   totalProfit: decimal("totalProfit", { precision: 15, scale: 2 }).default("0.00"),
   startedAt: timestamp("startedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  followerIdx: index("copy_trades_followerId_idx").on(t.followerId),
+  traderIdx: index("copy_trades_traderId_idx").on(t.traderId),
+}));
 
 // Robot Brain - evolutionary learning system
 export const robotBrain = mysqlTable("robot_brain", {
@@ -156,7 +177,9 @@ export const robotBrain = mysqlTable("robot_brain", {
   lastDecisionAt: timestamp("lastDecisionAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userRobotIdx: index("robot_brain_userId_robotId_idx").on(t.userId, t.robotId),
+}));
 
 // Robot Brain Decisions - history of every decision
 export const brainDecisions = mysqlTable("brain_decisions", {
@@ -172,7 +195,9 @@ export const brainDecisions = mysqlTable("brain_decisions", {
   profitAmount: decimal("profitAmount", { precision: 15, scale: 2 }),
   executedBy: mysqlEnum("executedBy", ["human", "robot"]).default("human").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  userRobotCreatedIdx: index("brain_decisions_userId_robotId_createdAt_idx").on(t.userId, t.robotId, t.createdAt),
+}));
 
 // Portfolio Assets - multi-class investment tracking
 export const portfolioAssets = mysqlTable("portfolio_assets", {
@@ -196,7 +221,9 @@ export const portfolioAssets = mysqlTable("portfolio_assets", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userIdx: index("portfolio_assets_userId_idx").on(t.userId),
+}));
 
 // Financial Goals - patrimony targets
 export const financialGoals = mysqlTable("financial_goals", {
@@ -212,7 +239,9 @@ export const financialGoals = mysqlTable("financial_goals", {
   monthlyContribution: decimal("monthlyContribution", { precision: 10, scale: 2 }).default("0.00"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userStatusIdx: index("financial_goals_userId_status_idx").on(t.userId, t.status),
+}));
 
 // AI Advisor conversations
 export const aiConversations = mysqlTable("ai_conversations", {
@@ -223,7 +252,9 @@ export const aiConversations = mysqlTable("ai_conversations", {
   messages: json("messages"), // array of {role, content, timestamp}
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userIdx: index("ai_conversations_userId_idx").on(t.userId),
+}));
 
 // Daily P&L tracking
 export const dailyPnl = mysqlTable("daily_pnl", {
@@ -239,7 +270,10 @@ export const dailyPnl = mysqlTable("daily_pnl", {
   netProfit: decimal("netProfit", { precision: 15, scale: 2 }).default("0.00"),
   fees: decimal("fees", { precision: 10, scale: 2 }).default("0.00"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  userDateIdx: index("daily_pnl_userId_date_idx").on(t.userId, t.date),
+  userRobotIdx: index("daily_pnl_userId_robotId_idx").on(t.userId, t.robotId),
+}));
 
 // Broker Connections
 export const brokerConnections = mysqlTable("broker_connections", {
@@ -253,7 +287,9 @@ export const brokerConnections = mysqlTable("broker_connections", {
   syncData: json("syncData"), // last sync results
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  userIdx: index("broker_connections_userId_idx").on(t.userId),
+}));
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
