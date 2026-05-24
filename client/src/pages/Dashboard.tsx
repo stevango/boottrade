@@ -47,10 +47,14 @@ export default function Dashboard() {
   const { data: robots } = trpc.robots.list.useQuery();
   const { data: pnlData } = trpc.pnl.daily.useQuery({ days: 30 });
   const { data: goals } = trpc.goals.projections.useQuery();
+  const { data: riskSettings } = trpc.risk.getSettings.useQuery();
 
-  // Compute portfolio metrics
+  // All metrics below are derived from real data. When the user has no data
+  // yet, values resolve to 0 / [] / null so the UI shows honest empty states
+  // instead of fabricated numbers.
+
   const portfolioMetrics = useMemo(() => {
-    if (!portfolio || portfolio.length === 0) return { totalInvested: 10000, totalCurrent: 17500, pnl: 7500, pnlPercent: 75 };
+    if (!portfolio || portfolio.length === 0) return { totalInvested: 0, totalCurrent: 0, pnl: 0, pnlPercent: 0 };
     const totalInvested = portfolio.reduce((sum, a) => sum + parseFloat(String(a.totalInvested || "0")), 0);
     const totalCurrent = portfolio.reduce((sum, a) => sum + parseFloat(String(a.currentValue || "0")), 0);
     const pnl = totalCurrent - totalInvested;
@@ -58,17 +62,8 @@ export default function Dashboard() {
     return { totalInvested, totalCurrent, pnl, pnlPercent };
   }, [portfolio]);
 
-  // Compute allocation data
   const allocationData = useMemo(() => {
-    if (!portfolio || portfolio.length === 0) {
-      return [
-        { name: "Ações", value: 30, color: COLORS[0] },
-        { name: "Renda Fixa", value: 25, color: COLORS[1] },
-        { name: "Cripto", value: 20, color: COLORS[2] },
-        { name: "Fundos", value: 15, color: COLORS[3] },
-        { name: "CDB", value: 10, color: COLORS[4] },
-      ];
-    }
+    if (!portfolio || portfolio.length === 0) return [];
     const grouped: Record<string, number> = {};
     portfolio.forEach(a => {
       const cls = a.assetClass;
@@ -82,15 +77,8 @@ export default function Dashboard() {
     }));
   }, [portfolio]);
 
-  // Compute PnL chart data
   const performanceData = useMemo(() => {
-    if (!pnlData || pnlData.length === 0) {
-      // Fallback mock data
-      return [
-        { date: "Jan", value: 10000 }, { date: "Fev", value: 10850 }, { date: "Mar", value: 11200 },
-        { date: "Abr", value: 10900 }, { date: "Mai", value: 12100 }, { date: "Jun", value: 12800 },
-      ];
-    }
+    if (!pnlData || pnlData.length === 0) return [];
     let cumulative = portfolioMetrics.totalInvested;
     return [...pnlData].reverse().map(d => {
       cumulative += parseFloat(String(d.netProfit || "0"));
@@ -101,29 +89,18 @@ export default function Dashboard() {
     });
   }, [pnlData, portfolioMetrics]);
 
-  // Daily result
   const dailyResult = useMemo(() => {
-    if (!pnlData || pnlData.length === 0) return { value: 1320, percent: 2.4 };
+    if (!pnlData || pnlData.length === 0) return { value: 0, percent: 0 };
     const today = pnlData[0];
     const net = parseFloat(String(today?.netProfit || "0"));
     const pct = portfolioMetrics.totalCurrent > 0 ? (net / portfolioMetrics.totalCurrent) * 100 : 0;
     return { value: net, percent: pct };
   }, [pnlData, portfolioMetrics]);
 
-  // Active robots count
   const activeRobots = robots?.filter(r => r.status === "active").length || 0;
 
-  // Recent trades
   const recentTrades = useMemo(() => {
-    if (!trades || trades.length === 0) {
-      return [
-        { asset: "WINFUT", type: "buy", profit: 450.0, time: "14:32" },
-        { asset: "BTC/USD", type: "sell", profit: -120.0, time: "13:15" },
-        { asset: "EUR/USD", type: "buy", profit: 280.0, time: "11:45" },
-        { asset: "PETR4", type: "sell", profit: 190.0, time: "10:20" },
-        { asset: "DOLFUT", type: "buy", profit: 520.0, time: "09:35" },
-      ];
-    }
+    if (!trades || trades.length === 0) return [];
     return trades.slice(0, 5).map(t => ({
       asset: t.asset,
       type: t.type,
@@ -132,14 +109,51 @@ export default function Dashboard() {
     }));
   }, [trades]);
 
-  // Metrics
   const winRate = useMemo(() => {
-    if (!trades || trades.length === 0) return 78.5;
-    const closed = trades.filter(t => t.status === "closed");
-    if (closed.length === 0) return 0;
+    const closed = (trades ?? []).filter(t => t.status === "closed");
+    if (closed.length === 0) return null;
     const wins = closed.filter(t => parseFloat(String(t.profit || "0")) > 0).length;
     return (wins / closed.length) * 100;
   }, [trades]);
+
+  // Period statistics derived from daily P&L rows.
+  const periodStats = useMemo(() => {
+    const rows = pnlData ?? [];
+    const netTotal = rows.reduce((s, d) => s + parseFloat(String(d.netProfit || "0")), 0);
+    const grossProfit = rows.reduce((s, d) => s + parseFloat(String(d.grossProfit || "0")), 0);
+    const grossLoss = Math.abs(rows.reduce((s, d) => s + parseFloat(String(d.grossLoss || "0")), 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : null;
+    const nets = rows.map(d => parseFloat(String(d.netProfit || "0")));
+    let sharpe: number | null = null;
+    if (nets.length >= 2) {
+      const mean = nets.reduce((a, b) => a + b, 0) / nets.length;
+      const variance = nets.reduce((a, b) => a + (b - mean) ** 2, 0) / nets.length;
+      const std = Math.sqrt(variance);
+      sharpe = std > 0 ? (mean / std) * Math.sqrt(252) : null;
+    }
+    return { netTotal, profitFactor, sharpe, hasRows: rows.length > 0 };
+  }, [pnlData]);
+
+  // Max drawdown computed from the equity curve.
+  const maxDrawdown = useMemo(() => {
+    if (performanceData.length === 0) return null;
+    let peak = -Infinity;
+    let maxDd = 0;
+    for (const p of performanceData) {
+      peak = Math.max(peak, p.value);
+      if (peak > 0) maxDd = Math.min(maxDd, ((p.value - peak) / peak) * 100);
+    }
+    return maxDd;
+  }, [performanceData]);
+
+  // IA Score: average across the user's robots.
+  const avgIaScore = useMemo(() => {
+    const scores = (robots ?? []).map(r => parseFloat(String(r.iaScore || "0"))).filter(n => n > 0);
+    if (scores.length === 0) return null;
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  }, [robots]);
+
+  const drawdownLimit = parseFloat(String(riskSettings?.maxDrawdown || "10"));
 
   return (
     <AppLayout>
@@ -217,10 +231,12 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Drawdown</p>
-                  <p className="text-2xl font-bold text-foreground">-3.2%</p>
+                  <p className="text-2xl font-bold text-foreground">
+                    {maxDrawdown !== null ? `${maxDrawdown.toFixed(1)}%` : "—"}
+                  </p>
                   <div className="flex items-center gap-1 mt-1">
                     <Shield className="w-3 h-3 text-primary" />
-                    <span className="text-xs text-muted-foreground">Limite: 10%</span>
+                    <span className="text-xs text-muted-foreground">Limite: {drawdownLimit.toFixed(0)}%</span>
                   </div>
                 </div>
                 <div className="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center">
@@ -242,6 +258,13 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
+              {performanceData.length === 0 ? (
+                <div className="h-[280px] flex flex-col items-center justify-center text-center gap-2">
+                  <BarChart3 className="w-8 h-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">Sem dados de performance ainda</p>
+                  <p className="text-xs text-muted-foreground/70">Ative um robô ou registre operações para ver sua evolução.</p>
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={performanceData}>
                   <defs>
@@ -261,6 +284,7 @@ export default function Dashboard() {
                   <Area type="monotone" dataKey="value" stroke="#00d4aa" strokeWidth={2} fill="url(#colorValue)" />
                 </AreaChart>
               </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
@@ -270,35 +294,45 @@ export default function Dashboard() {
               <CardTitle className="text-base font-semibold text-foreground">Alocação</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie
-                    data={allocationData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    dataKey="value"
-                    strokeWidth={2}
-                    stroke="oklch(0.12 0.01 260)"
-                  >
-                    {allocationData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+              {allocationData.length === 0 ? (
+                <div className="h-[180px] flex flex-col items-center justify-center text-center gap-2">
+                  <Wallet className="w-8 h-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">Carteira vazia</p>
+                  <p className="text-xs text-muted-foreground/70">Adicione ativos para ver sua alocação.</p>
+                </div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <PieChart>
+                      <Pie
+                        data={allocationData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={80}
+                        dataKey="value"
+                        strokeWidth={2}
+                        stroke="oklch(0.12 0.01 260)"
+                      >
+                        {allocationData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-2 mt-2">
+                    {allocationData.map((item) => (
+                      <div key={item.name} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-muted-foreground">{item.name}</span>
+                        </div>
+                        <span className="text-foreground font-medium">{item.value}%</span>
+                      </div>
                     ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2 mt-2">
-                {allocationData.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-muted-foreground">{item.name}</span>
-                    </div>
-                    <span className="text-foreground font-medium">{item.value}%</span>
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -313,18 +347,18 @@ export default function Dashboard() {
             <CardContent>
               <div className="grid grid-cols-2 gap-4">
                 {[
-                  { label: "ROI Total", value: `${portfolioMetrics.pnlPercent >= 0 ? "+" : ""}${portfolioMetrics.pnlPercent.toFixed(1)}%`, positive: portfolioMetrics.pnl >= 0 },
-                  { label: "Profit Factor", value: "2.34", positive: true },
-                  { label: "Win Rate", value: `${winRate.toFixed(1)}%`, positive: winRate > 50 },
-                  { label: "Sharpe Ratio", value: "1.82", positive: true },
-                  { label: "Resultado Mensal", value: `${dailyResult.value >= 0 ? "+" : ""}R$ ${(dailyResult.value * 22).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, positive: dailyResult.value >= 0 },
-                  { label: "IA Score", value: "8.7/10", positive: true },
-                  { label: "Max Drawdown", value: "-5.2%", positive: false },
+                  { label: "ROI Total", value: portfolio && portfolio.length > 0 ? `${portfolioMetrics.pnlPercent >= 0 ? "+" : ""}${portfolioMetrics.pnlPercent.toFixed(1)}%` : "—", positive: portfolioMetrics.pnl >= 0 },
+                  { label: "Profit Factor", value: periodStats.profitFactor !== null ? periodStats.profitFactor.toFixed(2) : "—", positive: (periodStats.profitFactor ?? 0) >= 1 },
+                  { label: "Win Rate", value: winRate !== null ? `${winRate.toFixed(1)}%` : "—", positive: (winRate ?? 0) > 50 },
+                  { label: "Sharpe Ratio", value: periodStats.sharpe !== null ? periodStats.sharpe.toFixed(2) : "—", positive: (periodStats.sharpe ?? 0) > 0 },
+                  { label: "Resultado (30d)", value: periodStats.hasRows ? `${periodStats.netTotal >= 0 ? "+" : ""}R$ ${periodStats.netTotal.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}` : "—", positive: periodStats.netTotal >= 0 },
+                  { label: "IA Score", value: avgIaScore !== null ? `${avgIaScore.toFixed(1)}/10` : "—", positive: true },
+                  { label: "Max Drawdown", value: maxDrawdown !== null ? `${maxDrawdown.toFixed(1)}%` : "—", positive: false },
                   { label: "Robôs Ativos", value: `${activeRobots}`, positive: true },
                 ].map((metric) => (
                   <div key={metric.label} className="p-3 rounded-lg bg-secondary/50">
                     <p className="text-xs text-muted-foreground">{metric.label}</p>
-                    <p className={`text-lg font-bold ${metric.positive ? "text-foreground" : "text-loss"}`}>
+                    <p className={`text-lg font-bold ${metric.value === "—" ? "text-muted-foreground" : metric.positive ? "text-foreground" : "text-loss"}`}>
                       {metric.value}
                     </p>
                   </div>
@@ -342,6 +376,13 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
+              {recentTrades.length === 0 ? (
+                <div className="py-10 flex flex-col items-center justify-center text-center gap-2">
+                  <Activity className="w-8 h-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">Nenhuma operação ainda</p>
+                  <p className="text-xs text-muted-foreground/70">Suas operações aparecerão aqui assim que forem executadas.</p>
+                </div>
+              ) : (
               <div className="space-y-3">
                 {recentTrades.map((trade, i) => (
                   <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-secondary/30">
@@ -364,6 +405,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
         </div>
