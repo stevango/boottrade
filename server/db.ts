@@ -7,7 +7,8 @@ import {
   aiConversations, dailyPnl, brokerConnections
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
-import { encryptSecret } from './crypto';
+import { encryptSecret, decryptSecret } from './crypto';
+import { fetchBinanceBalances } from './binance';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -578,26 +579,45 @@ export async function removeBrokerConnection(userId: number, id: number) {
 
 export async function syncBrokerConnection(userId: number, id: number) {
   const db = await getDb();
-  if (!db) return null;
-  await db.update(brokerConnections)
-    .set({ status: "syncing", lastSync: new Date() })
-    .where(and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId)));
-  // Placeholder for real broker API sync. The deferred update is wrapped so a
-  // failure can never surface as an unhandled rejection that crashes the process.
-  setTimeout(() => {
-    void (async () => {
-      try {
-        const db2 = await getDb();
-        if (!db2) return;
-        await db2.update(brokerConnections)
-          .set({ status: "connected" })
-          .where(and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId)));
-      } catch (error) {
-        console.error("[Broker] Deferred sync update failed:", error);
-      }
-    })();
-  }, 3000);
-  return { success: true };
+  if (!db) return { success: false };
+
+  const rows = await db.select({
+    broker: brokerConnections.broker,
+    credentials: brokerConnections.credentials,
+  }).from(brokerConnections)
+    .where(and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId)))
+    .limit(1);
+  const conn = rows[0];
+  if (!conn) return { success: false };
+
+  const scope = and(eq(brokerConnections.id, id), eq(brokerConnections.userId, userId));
+
+  try {
+    if (conn.broker === "binance") {
+      const { apiKey, apiSecret } = JSON.parse(decryptSecret(conn.credentials || ""));
+      if (!apiKey || !apiSecret) throw new Error("Credenciais da Binance ausentes");
+      const balances = await fetchBinanceBalances(apiKey, apiSecret);
+      await db.update(brokerConnections).set({
+        status: "connected",
+        lastSync: new Date(),
+        syncData: JSON.stringify({ balances, syncedAt: Date.now() }),
+      }).where(scope);
+      return { success: true, count: balances.length };
+    }
+
+    // Live sync not yet available for this broker (traditional brokers need
+    // Open Finance / partner integration). Mark synced with an informative note.
+    await db.update(brokerConnections).set({
+      status: "connected",
+      lastSync: new Date(),
+      syncData: JSON.stringify({ note: "Sincronização automática ainda não disponível para esta corretora." }),
+    }).where(scope);
+    return { success: true, count: 0 };
+  } catch (error) {
+    console.error("[Broker] sync failed:", error);
+    await db.update(brokerConnections).set({ status: "error", lastSync: new Date() }).where(scope);
+    return { success: false };
+  }
 }
 
 // Paper Trade (virtual simulator) — persists to the shared `trades` table with
