@@ -5,6 +5,15 @@ import type { TrpcContext } from "./context";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  // Never leak internal error details (e.g. raw SQL from a failed DB query) to
+  // the client. Explicit TRPCErrors (UNAUTHORIZED, CONFLICT, BAD_REQUEST, ...)
+  // keep their user-facing messages; unexpected throws are masked.
+  errorFormatter({ shape, error }) {
+    if (error.code === "INTERNAL_SERVER_ERROR") {
+      return { ...shape, message: "Erro interno do servidor. Tente novamente em instantes." };
+    }
+    return shape;
+  },
 });
 
 export const router = t.router;
