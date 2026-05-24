@@ -1,6 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { getLoginUrl } from "@/const";
 import { Bot, TrendingUp, Shield, Zap, BarChart3, Users, ArrowRight, CheckCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
@@ -33,7 +32,7 @@ export default function Home() {
             <span className="font-bold text-xl text-foreground">Boot Trade</span>
             <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">AI</span>
           </div>
-          <Button onClick={() => window.location.href = getLoginUrl()} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground">
+          <Button onClick={() => navigate("/login")} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground">
             Acessar Plataforma
           </Button>
         </div>
@@ -60,7 +59,7 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Button
                 size="lg"
-                onClick={() => window.location.href = getLoginUrl()}
+                onClick={() => navigate("/login")}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 h-12 text-base glow-cyan"
               >
                 Começar Agora <ArrowRight className="w-4 h-4 ml-2" />
@@ -199,7 +198,7 @@ export default function Home() {
             </div>
             <Button
               size="lg"
-              onClick={() => window.location.href = getLoginUrl()}
+              onClick={() => navigate("/login")}
               className="bg-primary hover:bg-primary/90 text-primary-foreground px-10 h-12 text-base"
             >
               Criar Conta Gratuita <ArrowRight className="w-4 h-4 ml-2" />

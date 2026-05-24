@@ -10,6 +10,7 @@ import Home from "./pages/Home";
 
 // Lazy-load feature pages so the landing page ships a small initial bundle.
 // Heavy deps (recharts, streamdown/shiki/mermaid) stay out of the first paint.
+const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Robots = lazy(() => import("./pages/Robots"));
 const RobotDetail = lazy(() => import("./pages/RobotDetail"));
@@ -41,6 +42,7 @@ function Router() {
     <Suspense fallback={<PageFallback />}>
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/login" component={Login} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/robots" component={Robots} />
         <Route path="/robots/:id" component={RobotDetail} />

@@ -311,6 +311,40 @@ describe("brokers router", () => {
   });
 });
 
+describe("auth register/login", () => {
+  it("register rejects a short password", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.auth.register({ name: "Ana", email: "ana@example.com", password: "short" })
+    ).rejects.toThrow();
+  });
+
+  it("register rejects an invalid email", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.auth.register({ name: "Ana", email: "not-an-email", password: "longenough1" })
+    ).rejects.toThrow();
+  });
+
+  it("login rejects an invalid email format", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.auth.login({ email: "nope", password: "whatever" })
+    ).rejects.toThrow();
+  });
+
+  it("login with unknown credentials is unauthorized", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.auth.login({ email: "ghost@example.com", password: "whatever" })
+    ).rejects.toThrow();
+  });
+});
+
 describe("paper router", () => {
   it("paper.list requires authentication", async () => {
     const { ctx } = createPublicContext();

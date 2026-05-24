@@ -85,6 +85,28 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+// Email/password auth helpers (standalone login, no external OAuth).
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function createLocalUser(data: { openId: string; email: string; name: string; passwordHash: string }) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(users).values({
+    openId: data.openId,
+    email: data.email,
+    name: data.name,
+    passwordHash: data.passwordHash,
+    loginMethod: "email",
+    lastSignedIn: new Date(),
+  });
+  return getUserByOpenId(data.openId);
+}
+
 // Robot queries
 export async function getAllRobots() {
   const db = await getDb();

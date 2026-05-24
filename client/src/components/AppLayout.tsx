@@ -1,5 +1,4 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -11,6 +10,7 @@ import {
   FlaskConical,
   LayoutDashboard,
   Link2,
+  Loader2,
   LogOut,
   Menu,
   PieChart,
@@ -48,15 +48,21 @@ const adminItems = [
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, loading, logout } = useAuth({ redirectOnUnauthenticated: true, redirectPath: "/login" });
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  if (!isAuthenticated) {
-    window.location.href = getLoginUrl();
-    return null;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
   }
+
+  // Not authenticated: the useAuth hook redirects to /login as an effect.
+  if (!isAuthenticated) return null;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">

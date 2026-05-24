@@ -1,8 +1,15 @@
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
+import { nanoid } from "nanoid";
 import { z } from "zod";
+import type { TrpcContext } from "./_core/context";
+import type { User } from "../drizzle/schema";
+import { sdk } from "./_core/sdk";
+import { ENV } from "./_core/env";
+import { hashPassword, verifyPassword } from "./password";
 import {
   getAllRobots, getRobotById, getRobotTrades, getUserTrades, getUserBacktests,
   getUserRiskSettings, getMarketplaceListings, getSocialFeed, getAllUsers,
@@ -13,15 +20,70 @@ import {
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
-  getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades
+  getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
+  getUserByEmail, createLocalUser
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { rateLimit } from "./rateLimit";
 
+// Strip secrets before sending a user to the client.
+function toPublicUser(user: User | null) {
+  if (!user) return null;
+  const { passwordHash, ...safe } = user;
+  void passwordHash;
+  return safe;
+}
+
+async function setSessionCookie(ctx: TrpcContext, user: User) {
+  const token = await sdk.signSession(
+    { openId: user.openId, appId: ENV.appId || "boottrade", name: user.name || "" },
+    { expiresInMs: ONE_YEAR_MS },
+  );
+  const cookieOptions = getSessionCookieOptions(ctx.req);
+  ctx.res.cookie(COOKIE_NAME, token, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(opts => toPublicUser(opts.ctx.user)),
+    register: publicProcedure
+      .input(z.object({
+        name: z.string().trim().min(1).max(80),
+        email: z.string().trim().email().max(320),
+        password: z.string().min(8).max(200),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const email = input.email.toLowerCase();
+        const existing = await getUserByEmail(email);
+        if (existing) {
+          throw new TRPCError({ code: "CONFLICT", message: "Este e-mail já está cadastrado." });
+        }
+        const passwordHash = await hashPassword(input.password);
+        const user = await createLocalUser({ openId: `local:${nanoid()}`, email, name: input.name, passwordHash });
+        if (!user) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar a conta." });
+        }
+        await setSessionCookie(ctx, user);
+        return toPublicUser(user);
+      }),
+    login: publicProcedure
+      .input(z.object({
+        email: z.string().trim().email().max(320),
+        password: z.string().min(1).max(200),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const email = input.email.toLowerCase();
+        // Throttle credential stuffing per email.
+        rateLimit(`auth.login:${email}`, 10, 60_000);
+        const user = await getUserByEmail(email);
+        const ok = user && (await verifyPassword(input.password, user.passwordHash));
+        if (!user || !ok) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "E-mail ou senha inválidos." });
+        }
+        await setSessionCookie(ctx, user);
+        return toPublicUser(user);
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -295,7 +357,8 @@ export const appRouter = router({
 
   admin: router({
     users: adminProcedure.query(async () => {
-      return getAllUsers();
+      const users = await getAllUsers();
+      return users.map(toPublicUser);
     }),
   }),
 
