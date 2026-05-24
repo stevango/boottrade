@@ -1,7 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import {
   getAllRobots, getRobotById, getUserTrades, getUserBacktests,
@@ -285,10 +285,7 @@ export const appRouter = router({
   }),
 
   admin: router({
-    users: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "admin") {
-        throw new Error("Unauthorized");
-      }
+    users: adminProcedure.query(async () => {
       return getAllUsers();
     }),
   }),
@@ -298,7 +295,7 @@ export const appRouter = router({
       return getBrokerConnections(ctx.user.id);
     }),
     connect: protectedProcedure
-      .input(z.object({ broker: z.string(), credentials: z.string() }))
+      .input(z.object({ broker: z.string().min(1).max(50), credentials: z.string().min(1).max(4096) }))
       .mutation(async ({ ctx, input }) => {
         return addBrokerConnection(ctx.user.id, input.broker, input.credentials);
       }),

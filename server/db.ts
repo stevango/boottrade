@@ -7,6 +7,7 @@ import {
   aiConversations, dailyPnl, brokerConnections
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { encryptSecret } from './crypto';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -509,13 +510,30 @@ export async function getAllUsers() {
 export async function getBrokerConnections(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(brokerConnections).where(eq(brokerConnections.userId, userId)).orderBy(desc(brokerConnections.createdAt));
+  // Never expose the encrypted `credentials` column to callers/clients.
+  return db.select({
+    id: brokerConnections.id,
+    userId: brokerConnections.userId,
+    broker: brokerConnections.broker,
+    status: brokerConnections.status,
+    accountId: brokerConnections.accountId,
+    lastSync: brokerConnections.lastSync,
+    syncData: brokerConnections.syncData,
+    createdAt: brokerConnections.createdAt,
+    updatedAt: brokerConnections.updatedAt,
+  }).from(brokerConnections).where(eq(brokerConnections.userId, userId)).orderBy(desc(brokerConnections.createdAt));
 }
 
 export async function addBrokerConnection(userId: number, broker: string, credentials: string) {
   const db = await getDb();
   if (!db) return null;
-  await db.insert(brokerConnections).values({ userId, broker, credentials, status: "connected", lastSync: new Date() });
+  await db.insert(brokerConnections).values({
+    userId,
+    broker,
+    credentials: encryptSecret(credentials),
+    status: "connected",
+    lastSync: new Date(),
+  });
   return { success: true };
 }
 
