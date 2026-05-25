@@ -12,7 +12,12 @@ import {
   BarChart3,
   Target,
   Wallet,
+  CheckCircle2,
+  Circle,
+  ArrowRight,
+  Radar,
 } from "lucide-react";
+import { Link } from "wouter";
 import {
   AreaChart,
   Area,
@@ -48,6 +53,17 @@ export default function Dashboard() {
   const { data: pnlData } = trpc.pnl.daily.useQuery({ days: 30 });
   const { data: goals } = trpc.goals.projections.useQuery();
   const { data: riskSettings } = trpc.risk.getSettings.useQuery();
+  const { data: watchlist } = trpc.watchlist.list.useQuery();
+
+  // Onboarding: real progress detection across the core setup steps.
+  const steps = [
+    { done: !!riskSettings, label: "Configure sua gestão de risco", to: "/risk", icon: Shield },
+    { done: (portfolio?.length ?? 0) > 0, label: "Registre sua carteira de ativos", to: "/portfolio", icon: Wallet },
+    { done: (goals?.length ?? 0) > 0, label: "Defina uma meta financeira", to: "/goals", icon: Target },
+    { done: (watchlist?.length ?? 0) > 0, label: "Monte sua watchlist de oportunidades", to: "/opportunities", icon: Radar },
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  const showOnboarding = watchlist !== undefined && doneCount < steps.length;
 
   // All metrics below are derived from real data. When the user has no data
   // yet, values resolve to 0 / [] / null so the UI shows honest empty states
@@ -163,6 +179,31 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-muted-foreground">Visão geral da sua performance</p>
         </div>
+
+        {/* Onboarding guide */}
+        {showOnboarding && (
+          <Card className="bg-card border-primary/20">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base text-foreground">Primeiros passos</CardTitle>
+                <span className="text-xs text-muted-foreground">{doneCount}/{steps.length} concluídos</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {steps.map((s) => (
+                  <Link key={s.to} href={s.to}>
+                    <div className={`flex items-center gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${s.done ? "border-border bg-secondary/20" : "border-primary/20 bg-primary/5 hover:border-primary/40"}`}>
+                      {s.done ? <CheckCircle2 className="w-5 h-5 text-profit shrink-0" /> : <Circle className="w-5 h-5 text-muted-foreground shrink-0" />}
+                      <span className={`text-sm flex-1 ${s.done ? "text-muted-foreground line-through" : "text-foreground"}`}>{s.label}</span>
+                      {!s.done && <ArrowRight className="w-4 h-4 text-primary shrink-0" />}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
