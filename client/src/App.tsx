@@ -2,32 +2,48 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ComponentType } from "react";
 import { Loader2 } from "lucide-react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 
+// After a new deploy, hashed chunk filenames change, so a stale browser tab can
+// fail to load a lazy page chunk. Recover automatically by reloading once
+// (guarded against an infinite loop if the chunk is genuinely missing).
+function lazyWithReload<T extends ComponentType<unknown>>(factory: () => Promise<{ default: T }>) {
+  return lazy(() =>
+    factory()
+      .then((m) => { sessionStorage.removeItem("chunkReload"); return m; })
+      .catch((err) => {
+        if (sessionStorage.getItem("chunkReload")) throw err;
+        sessionStorage.setItem("chunkReload", "1");
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {}); // never resolves; the page is reloading
+      }),
+  );
+}
+
 // Lazy-load feature pages so the landing page ships a small initial bundle.
 // Heavy deps (recharts, streamdown/shiki/mermaid) stay out of the first paint.
-const Login = lazy(() => import("./pages/Login"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Robots = lazy(() => import("./pages/Robots"));
-const RobotDetail = lazy(() => import("./pages/RobotDetail"));
-const RobotBrain = lazy(() => import("./pages/RobotBrain"));
-const Backtest = lazy(() => import("./pages/Backtest"));
-const PaperTrade = lazy(() => import("./pages/PaperTrade"));
-const RiskManagement = lazy(() => import("./pages/RiskManagement"));
-const Marketplace = lazy(() => import("./pages/Marketplace"));
-const SocialTrading = lazy(() => import("./pages/SocialTrading"));
-const Admin = lazy(() => import("./pages/Admin"));
-const Calendar = lazy(() => import("./pages/Calendar"));
-const Portfolio = lazy(() => import("./pages/Portfolio"));
-const AiAdvisor = lazy(() => import("./pages/AiAdvisor"));
-const Goals = lazy(() => import("./pages/Goals"));
-const PnL = lazy(() => import("./pages/PnL"));
-const SmartAllocator = lazy(() => import("./pages/SmartAllocator"));
-const Brokers = lazy(() => import("./pages/Brokers"));
+const Login = lazyWithReload(() => import("./pages/Login"));
+const Dashboard = lazyWithReload(() => import("./pages/Dashboard"));
+const Robots = lazyWithReload(() => import("./pages/Robots"));
+const RobotDetail = lazyWithReload(() => import("./pages/RobotDetail"));
+const RobotBrain = lazyWithReload(() => import("./pages/RobotBrain"));
+const Backtest = lazyWithReload(() => import("./pages/Backtest"));
+const PaperTrade = lazyWithReload(() => import("./pages/PaperTrade"));
+const RiskManagement = lazyWithReload(() => import("./pages/RiskManagement"));
+const Marketplace = lazyWithReload(() => import("./pages/Marketplace"));
+const SocialTrading = lazyWithReload(() => import("./pages/SocialTrading"));
+const Admin = lazyWithReload(() => import("./pages/Admin"));
+const Calendar = lazyWithReload(() => import("./pages/Calendar"));
+const Portfolio = lazyWithReload(() => import("./pages/Portfolio"));
+const AiAdvisor = lazyWithReload(() => import("./pages/AiAdvisor"));
+const Goals = lazyWithReload(() => import("./pages/Goals"));
+const PnL = lazyWithReload(() => import("./pages/PnL"));
+const SmartAllocator = lazyWithReload(() => import("./pages/SmartAllocator"));
+const Brokers = lazyWithReload(() => import("./pages/Brokers"));
 
 function PageFallback() {
   return (
