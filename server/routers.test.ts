@@ -372,6 +372,23 @@ describe("backtests router", () => {
   });
 });
 
+describe("brain.analyzeAsset", () => {
+  it("requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.brain.analyzeAsset({ robotId: 1, symbol: "GOLD11" })).rejects.toThrow();
+  });
+
+  it("returns a not-configured signal when no market feed is set", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const r = await caller.brain.analyzeAsset({ robotId: 1, symbol: "GOLD11" });
+    expect(r.configured).toBe(false);
+    expect(r.signal).toBeNull();
+    expect(r.message).toMatch(/BRAPI_TOKEN/);
+  });
+});
+
 describe("ai.chat", () => {
   it("requires authentication", async () => {
     const { ctx } = createPublicContext();

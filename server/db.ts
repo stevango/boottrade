@@ -232,14 +232,17 @@ export async function resolveDecision(userId: number, decisionId: number, outcom
     profitAmount: profitAmount.toString(),
   }).where(eq(brainDecisions.id, decisionId));
 
-  // Recalculate brain assertiveness
+  // Recalculate brain assertiveness from RESOLVED decisions only (profit/loss),
+  // so pending/hold decisions don't dilute the score.
   const brain = await getRobotBrain(userId, decision.robotId);
   if (!brain) return { success: false };
 
   const isCorrect = outcome === "profit";
-  const newCorrect = (brain.correctDecisions || 0) + (isCorrect ? 1 : 0);
-  const newTotal = brain.totalDecisions || 1;
-  const newAssertiveness = (newCorrect / newTotal) * 100;
+  const brainDecisionsRows = await db.select().from(brainDecisions)
+    .where(eq(brainDecisions.brainId, brain.id));
+  const decided = brainDecisionsRows.filter(d => d.outcome === "profit" || d.outcome === "loss");
+  const newCorrect = decided.filter(d => d.outcome === "profit").length;
+  const newAssertiveness = decided.length > 0 ? (newCorrect / decided.length) * 100 : 0;
 
   // Update learning data with patterns
   const existingLearning = (brain.learningData as any) || { patterns: [], bestAssets: {}, bestHours: {}, weeklyProgress: [] };

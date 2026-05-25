@@ -157,6 +157,32 @@ export const appRouter = router({
         if (!brain) return null;
         return brain.learningData || { bestAssets: {}, bestHours: {}, patterns: [] };
       }),
+    analyzeAsset: protectedProcedure
+      .input(z.object({
+        robotId: z.number(),
+        symbol: z.string().trim().min(1).max(20),
+        range: z.enum(["1y", "2y", "5y", "10y"]).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!isMarketDataConfigured()) {
+          return { configured: false as const, signal: null, decision: null, symbol: input.symbol, message: "Feed de mercado não configurado. Defina BRAPI_TOKEN para o robô analisar ativos." };
+        }
+        const history = await fetchDailyHistory(input.symbol, input.range ?? "5y");
+        const signal = analyzeSeries(history.points);
+        if (!signal) {
+          return { configured: true as const, signal: null, decision: null, symbol: history.symbol, message: "Dados insuficientes para gerar um sinal." };
+        }
+        const decision = signal.trend === "alta" ? "buy" : signal.trend === "baixa" ? "sell" : "hold";
+        await addBrainDecision(ctx.user.id, input.robotId, {
+          decision,
+          asset: history.symbol,
+          confidence: signal.trendStrength,
+          reasoning: signal.summary,
+          executedBy: "robot",
+          outcome: "pending",
+        });
+        return { configured: true as const, signal, decision, symbol: history.symbol, message: null };
+      }),
   }),
 
   trades: router({
