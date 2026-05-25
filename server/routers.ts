@@ -27,6 +27,8 @@ import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
 import { runMonteCarloBacktest } from "./backtest";
 import { computeAllocation } from "./allocation";
+import { analyzeSeries } from "./signals";
+import { isMarketDataConfigured, fetchDailyHistory } from "./marketData";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -373,6 +375,20 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         return getAiConversation(ctx.user.id, input.id);
+      }),
+  }),
+
+  market: router({
+    configured: protectedProcedure.query(() => ({ configured: isMarketDataConfigured() })),
+    analyze: protectedProcedure
+      .input(z.object({ symbol: z.string().trim().min(1).max(20), range: z.enum(["1y", "2y", "5y", "10y"]).optional() }))
+      .mutation(async ({ input }) => {
+        if (!isMarketDataConfigured()) {
+          return { configured: false as const, symbol: input.symbol, name: input.symbol, signal: null, message: "Feed de mercado não configurado. Defina BRAPI_TOKEN no servidor para ativar a análise de tendências." };
+        }
+        const history = await fetchDailyHistory(input.symbol, input.range ?? "5y");
+        const signal = analyzeSeries(history.points);
+        return { configured: true as const, symbol: history.symbol, name: history.name, signal, message: signal ? null : "Dados insuficientes para análise." };
       }),
   }),
 

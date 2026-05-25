@@ -1,14 +1,129 @@
 import AppLayout from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   Calendar as CalendarIcon, Newspaper, Bell, BellRing, Clock, Activity,
+  TrendingUp, TrendingDown, Minus, Search, Loader2,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
+
+type TrendSignal = {
+  lastPrice: number; trend: "alta" | "baixa" | "lateral"; trendStrength: number;
+  returns: { label: string; days: number; percent: number | null }[];
+  sma50: number | null; sma200: number | null; maxDrawdown: number;
+  annualizedVolatility: number | null; summary: string;
+};
+
+const trendStyle = {
+  alta: { label: "Alta", className: "bg-profit/10 text-profit border-profit/20", Icon: TrendingUp },
+  baixa: { label: "Baixa", className: "bg-loss/10 text-loss border-loss/20", Icon: TrendingDown },
+  lateral: { label: "Lateral", className: "bg-secondary text-muted-foreground border-border", Icon: Minus },
+};
+
+function MarketTrend() {
+  const [symbol, setSymbol] = useState("PETR4");
+  const [range, setRange] = useState<"1y" | "5y" | "10y">("5y");
+  const [result, setResult] = useState<{ configured: boolean; symbol: string; name: string; signal: TrendSignal | null; message: string | null } | null>(null);
+
+  const analyze = trpc.market.analyze.useMutation({
+    onSuccess: (r) => setResult(r as any),
+    onError: () => toast.error("Falha ao analisar. Verifique o código do ativo."),
+  });
+
+  const run = () => {
+    if (!symbol.trim()) return toast.error("Informe o código do ativo (ex.: PETR4).");
+    analyze.mutate({ symbol: symbol.trim(), range });
+  };
+
+  const sig = result?.signal;
+  const t = sig ? trendStyle[sig.trend] : null;
+
+  return (
+    <div className="space-y-4">
+      <Card className="bg-card border-border">
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">Ativo</Label>
+              <Input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="PETR4, VALE3, IVVB11..." className="bg-secondary border-border" onKeyDown={(e) => e.key === "Enter" && run()} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Período</Label>
+              <div className="flex gap-1">
+                {(["1y", "5y", "10y"] as const).map(r => (
+                  <button key={r} onClick={() => setRange(r)} className={`px-3 py-2 rounded-lg text-xs border transition-all ${range === r ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground"}`}>{r === "1y" ? "1A" : r === "5y" ? "5A" : "10A"}</button>
+                ))}
+              </div>
+            </div>
+            <Button onClick={run} disabled={analyze.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              {analyze.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />} Analisar
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {result && result.configured === false && (
+        <Card className="bg-warning/5 border-warning/20">
+          <CardContent className="p-4 flex items-start gap-3">
+            <Clock className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Feed de mercado não configurado</p>
+              <p className="text-xs text-muted-foreground mt-1">Defina <code className="text-primary">BRAPI_TOKEN</code> no servidor (token gratuito em brapi.dev) para ativar a análise de tendências com dados reais.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {result && result.configured && !sig && (
+        <Card className="bg-card border-border"><CardContent className="p-6 text-center text-sm text-muted-foreground">{result.message || "Sem dados para este ativo."}</CardContent></Card>
+      )}
+
+      {sig && t && (
+        <>
+          <Card className="bg-card border-border">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">{result?.name} <span className="text-xs text-muted-foreground">({result?.symbol})</span></p>
+                  <p className="text-2xl font-bold text-foreground">R$ {sig.lastPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+                </div>
+                <Badge variant="outline" className={t.className}>
+                  <t.Icon className="w-3 h-3 mr-1" /> Tendência de {t.label} • força {sig.trendStrength}%
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">{sig.summary}</p>
+            </CardContent>
+          </Card>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {sig.returns.map((r) => (
+              <Card key={r.label} className="bg-card border-border">
+                <CardContent className="p-3">
+                  <p className="text-xs text-muted-foreground">Retorno {r.label}</p>
+                  <p className={`text-lg font-bold ${r.percent === null ? "text-muted-foreground" : r.percent >= 0 ? "text-profit" : "text-loss"}`}>
+                    {r.percent === null ? "—" : `${r.percent >= 0 ? "+" : ""}${r.percent.toFixed(1)}%`}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+            <Card className="bg-card border-border"><CardContent className="p-3"><p className="text-xs text-muted-foreground">Drawdown máx.</p><p className="text-lg font-bold text-loss">{sig.maxDrawdown.toFixed(1)}%</p></CardContent></Card>
+            {sig.annualizedVolatility !== null && (
+              <Card className="bg-card border-border"><CardContent className="p-3"><p className="text-xs text-muted-foreground">Volatilidade anual</p><p className="text-lg font-bold text-foreground">{sig.annualizedVolatility.toFixed(1)}%</p></CardContent></Card>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground px-1">Análise descritiva baseada em dados históricos — não é previsão nem recomendação de compra/venda.</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 const alertConfigs = [
   { id: "price_spike", label: "Variação brusca de preço (>3%)", description: "Alerta quando um ativo da sua carteira varia mais de 3% em curto período", enabled: true },
@@ -61,11 +176,7 @@ export default function Calendar() {
           </TabsList>
 
           <TabsContent value="market" className="mt-6">
-            <ComingSoon
-              icon={Activity}
-              title="Cotações em tempo real"
-              desc="Preços ao vivo de ações, índices e cripto dependem da integração com um feed de mercado (B3 / exchanges). Vamos habilitar assim que a fonte de dados estiver conectada."
-            />
+            <MarketTrend />
           </TabsContent>
 
           <TabsContent value="calendar" className="mt-6">
