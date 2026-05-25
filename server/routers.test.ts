@@ -411,6 +411,28 @@ describe("brain.analyzeAsset", () => {
   });
 });
 
+describe("ai.advise + admin.diagnostics", () => {
+  it("ai.advise requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.ai.advise({ topic: "risco", context: "dados" })).rejects.toThrow();
+  });
+
+  it("ai.advise returns a not-configured message without an LLM", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const r = await caller.ai.advise({ topic: "tecnologia", context: "diagnóstico" });
+    expect(r.configured).toBe(false);
+    expect(r.response).toMatch(/não está configurado/i);
+  });
+
+  it("admin.diagnostics is admin-only", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.admin.diagnostics()).rejects.toThrow();
+  });
+});
+
 describe("ai.chat", () => {
   it("requires authentication", async () => {
     const { ctx } = createPublicContext();

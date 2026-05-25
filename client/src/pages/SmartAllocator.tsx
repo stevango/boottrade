@@ -9,8 +9,8 @@ import { Sparkles, DollarSign, Target, TrendingUp, Shield, Zap, Loader2, PieChar
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
-import { Streamdown } from "streamdown";
 import { toast } from "sonner";
+import { AdvisorPanel } from "@/components/AdvisorPanel";
 
 const COLORS = ["#00d4aa", "#00ff88", "#7c3aed", "#f59e0b", "#ef4444", "#3b82f6", "#ec4899", "#14b8a6", "#eab308"];
 const fmtBRL = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -34,16 +34,10 @@ export default function SmartAllocator() {
   const [monthlyIncome, setMonthlyIncome] = useState("");
   const [emergencyFund, setEmergencyFund] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [aiResponse, setAiResponse] = useState("");
 
   const recommendMutation = trpc.allocation.recommend.useMutation({
-    onSuccess: (p) => { setPlan(p as Plan); setAiResponse(""); },
+    onSuccess: (p) => setPlan(p as Plan),
     onError: () => toast.error("Não foi possível gerar a alocação."),
-  });
-
-  const chatMutation = trpc.ai.chat.useMutation({
-    onSuccess: (data) => setAiResponse(data.response),
-    onError: () => toast.error("Erro ao gerar explicação com IA."),
   });
 
   const handleAnalyze = () => {
@@ -59,11 +53,14 @@ export default function SmartAllocator() {
     });
   };
 
-  const explainWithAI = () => {
-    if (!plan) return;
-    const breakdown = plan.slices.map(s => `${s.label}: ${s.percent}% (R$ ${fmtBRL(s.amount)})`).join("; ");
-    const message = `Gerei esta alocação determinística para R$ ${fmtBRL(plan.total)} (perfil ${riskProfile}, horizonte ${horizon}, objetivo ${objective}): ${breakdown}. Explique em linguagem simples por que essa distribuição faz sentido, os riscos de cada parte, e sugestões de ativos específicos (ex.: tickers, fundos, tesouro). Seja direto e responsável.`;
-    chatMutation.mutate({ message, context: "consultor" });
+  const advisorContext = () => {
+    if (!plan) return "";
+    const breakdown = plan.slices.map(s => `${s.label}: ${s.percent}% (R$ ${fmtBRL(s.amount)}, ${s.horizon} prazo)`).join("; ");
+    return `Plano de alocação para R$ ${fmtBRL(plan.total)} — perfil ${riskProfile}, horizonte ${horizon}, objetivo ${objective}.
+Distribuição: ${breakdown}.
+Por horizonte: curto ${plan.byHorizon.curto}%, médio ${plan.byHorizon.medio}%, longo ${plan.byHorizon.longo}%.
+Risco esperado: ${plan.expectedRisk}.${plan.reserveRecommendation ? ` Reserva: ${plan.reserveRecommendation}` : ""}
+Avalie se a distribuição faz sentido, o que corrigir, oportunidades para potencializar respeitando o risco, e sugira ativos específicos (tickers/fundos/tesouro).`;
   };
 
   const chartData = plan?.slices.map((s, i) => ({ name: s.label, value: s.percent, color: COLORS[i % COLORS.length] })) ?? [];
@@ -255,22 +252,14 @@ export default function SmartAllocator() {
                   </CardContent>
                 </Card>
 
-                {/* Optional AI explanation */}
-                <Card className="bg-card border-border">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> Explicação da IA (opcional)</CardTitle>
-                      <Button size="sm" variant="outline" onClick={explainWithAI} disabled={chatMutation.isPending}>
-                        {chatMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Explicar
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  {aiResponse && (
-                    <CardContent>
-                      <div className="prose prose-invert prose-sm max-w-none"><Streamdown>{aiResponse}</Streamdown></div>
-                    </CardContent>
-                  )}
-                </Card>
+                {/* AI consultant */}
+                <AdvisorPanel
+                  topic="alocacao"
+                  title="Consultor de Alocação IA"
+                  description="A IA analisa este plano e orienta o que corrigir e como potencializar respeitando seu risco."
+                  getContext={advisorContext}
+                  buttonLabel="Orientar"
+                />
               </>
             )}
           </div>

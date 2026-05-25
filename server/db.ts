@@ -1,4 +1,4 @@
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, count } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, robots, trades, backtests, riskSettings,
@@ -593,6 +593,17 @@ export async function getSocialFeed(limit = 20) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(socialPosts).orderBy(desc(socialPosts.createdAt)).limit(limit);
+}
+
+// System diagnostics (admin)
+export async function getSystemStats() {
+  const db = await getDb();
+  if (!db) return null;
+  const one = async (table: any) => (await db.select({ c: count() }).from(table))[0]?.c ?? 0;
+  const [usersC, robotsC, tradesC, brokersC, backtestsC] = await Promise.all([
+    one(users), one(robots), one(trades), one(brokerConnections), one(backtests),
+  ]);
+  return { users: usersC, robots: robotsC, trades: tradesC, brokers: brokersC, backtests: backtestsC };
 }
 
 // Admin queries

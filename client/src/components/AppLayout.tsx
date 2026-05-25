@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   Calendar,
+  CircuitBoard,
   ChevronLeft,
   ChevronRight,
   FlaskConical,
@@ -47,6 +48,7 @@ const navItems = [
 
 const adminItems = [
   { path: "/admin", label: "Admin", icon: BarChart3 },
+  { path: "/auditor", label: "Auditor Técnico", icon: CircuitBoard },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

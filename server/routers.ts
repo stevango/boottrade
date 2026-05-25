@@ -22,7 +22,7 @@ import {
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
   getUserByEmail, createLocalUser, createBacktest,
-  getWatchlist, addWatchlistItem, removeWatchlistItem
+  getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats
 } from "./db";
 import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
@@ -403,6 +403,36 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         return getAiConversation(ctx.user.id, input.id);
       }),
+    advise: protectedProcedure
+      .input(z.object({
+        topic: z.enum(["risco", "alocacao", "operacao", "tecnologia", "geral"]),
+        context: z.string().min(1).max(8000),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        rateLimit(`ai.advise:${ctx.user.id}`, 20, 60_000);
+        if (!isLLMConfigured()) {
+          return { configured: false as const, response: "O Consultor IA ainda não está configurado. Defina OPENAI_API_KEY no servidor para ativar as orientações." };
+        }
+        const base = "Responda em português brasileiro, de forma direta, específica e acionável (use listas e prioridades). Foque em segurança e em passos concretos. Deixe claro que são orientações, não garantias.";
+        const prompts: Record<string, string> = {
+          risco: `Você é um consultor de gestão de risco para trading. Com base nas configurações e métricas REAIS abaixo, aponte: (1) o que está perigoso ou mal calibrado, (2) o que corrigir imediatamente, (3) como evoluir para minimizar risco, (4) oportunidades de melhoria. ${base}`,
+          alocacao: `Você é um consultor financeiro. Com base no plano de alocação e perfil REAIS abaixo, avalie a distribuição, aponte o que corrigir e como potencializar resultados respeitando o risco, e sugira ativos/classes específicos. ${base}`,
+          operacao: `Você é um assistente de operações de trading. Com base nos dados REAIS abaixo, oriente sobre entradas/saídas, risk/reward, stop e alvo. ${base}`,
+          tecnologia: `Você é um auditor técnico de software sênior. Com base no diagnóstico REAL do sistema abaixo, aponte: falhas, vulnerabilidades, pontos críticos, o que melhorar, o que criar, o que editar e o que remover — priorizado por impacto e risco. ${base}`,
+          geral: `Você é um consultor especialista. Analise os dados REAIS abaixo e oriente o usuário. ${base}`,
+        };
+        const messages = [
+          { role: "system" as const, content: prompts[input.topic] },
+          { role: "user" as const, content: input.context },
+        ];
+        try {
+          const response = (await chatComplete(messages)) || "Não consegui gerar a orientação agora. Tente novamente.";
+          return { configured: true as const, response };
+        } catch (error) {
+          console.error("[AI] advise failed:", error);
+          return { configured: true as const, response: "Ocorreu um erro ao consultar a IA. Tente novamente." };
+        }
+      }),
   }),
 
   watchlist: router({
@@ -484,6 +514,20 @@ export const appRouter = router({
     users: adminProcedure.query(async () => {
       const users = await getAllUsers();
       return users.map(toPublicUser);
+    }),
+    diagnostics: adminProcedure.query(async () => {
+      const stats = await getSystemStats();
+      return {
+        dbConnected: stats !== null,
+        llmConfigured: isLLMConfigured(),
+        marketDataConfigured: isMarketDataConfigured(),
+        counts: stats ?? { users: 0, robots: 0, trades: 0, brokers: 0, backtests: 0 },
+        security: {
+          brokerCredentialsEncrypted: true,
+          internalErrorsMasked: true,
+          aiRateLimited: true,
+        },
+      };
     }),
   }),
 

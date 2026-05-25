@@ -45,6 +45,7 @@ const PnL = lazyWithReload(() => import("./pages/PnL"));
 const SmartAllocator = lazyWithReload(() => import("./pages/SmartAllocator"));
 const Brokers = lazyWithReload(() => import("./pages/Brokers"));
 const Opportunities = lazyWithReload(() => import("./pages/Opportunities"));
+const Auditor = lazyWithReload(() => import("./pages/Auditor"));
 
 function PageFallback() {
   return (
@@ -70,6 +71,7 @@ function Router() {
         <Route path="/marketplace" component={Marketplace} />
         <Route path="/social" component={SocialTrading} />
         <Route path="/admin" component={Admin} />
+        <Route path="/auditor" component={Auditor} />
         <Route path="/calendar" component={Calendar} />
         <Route path="/portfolio" component={Portfolio} />
         <Route path="/advisor" component={AiAdvisor} />
