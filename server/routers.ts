@@ -26,6 +26,7 @@ import {
 import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
 import { runMonteCarloBacktest } from "./backtest";
+import { computeAllocation } from "./allocation";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -372,6 +373,21 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         return getAiConversation(ctx.user.id, input.id);
+      }),
+  }),
+
+  allocation: router({
+    recommend: protectedProcedure
+      .input(z.object({
+        amount: z.number().positive().max(1e12),
+        riskProfile: z.enum(["conservador", "moderado", "arrojado", "agressivo"]),
+        horizon: z.enum(["curto", "medio", "longo"]),
+        objective: z.enum(["crescimento", "renda", "protecao", "aposentadoria"]),
+        monthlyIncome: z.number().nonnegative().optional(),
+        emergencyFund: z.number().nonnegative().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return computeAllocation(input);
       }),
   }),
 
