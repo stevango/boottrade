@@ -345,6 +345,33 @@ describe("auth register/login", () => {
   });
 });
 
+describe("backtests router", () => {
+  it("run requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.backtests.run({ name: "X", market: "indices", initialCapital: 10000, numTrades: 100, winRate: 55, payoffRatio: 1.5, riskPerTrade: 1 })
+    ).rejects.toThrow();
+  });
+
+  it("run rejects out-of-range win rate", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.backtests.run({ name: "X", market: "indices", initialCapital: 10000, numTrades: 100, winRate: 150, payoffRatio: 1.5, riskPerTrade: 1 })
+    ).rejects.toThrow();
+  });
+
+  it("run returns a Monte Carlo result for an authenticated user", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const r = await caller.backtests.run({ name: "Edge", market: "cripto", initialCapital: 10000, numTrades: 100, winRate: 60, payoffRatio: 1.5, riskPerTrade: 1, simulations: 50 });
+    expect(r.equityCurve[0]).toEqual({ trade: 0, equity: 10000 });
+    expect(typeof r.probProfit).toBe("number");
+    expect(r.numTrades).toBe(100);
+  });
+});
+
 describe("paper router", () => {
   it("paper.list requires authentication", async () => {
     const { ctx } = createPublicContext();

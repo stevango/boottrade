@@ -21,10 +21,11 @@ import {
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
-  getUserByEmail, createLocalUser
+  getUserByEmail, createLocalUser, createBacktest
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { rateLimit } from "./rateLimit";
+import { runMonteCarloBacktest } from "./backtest";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -186,6 +187,33 @@ export const appRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
       return getUserBacktests(ctx.user.id);
     }),
+    run: protectedProcedure
+      .input(z.object({
+        name: z.string().trim().min(1).max(200),
+        market: z.enum(["dolar", "acoes", "daytrade", "cripto", "apostas", "forex", "indices"]),
+        initialCapital: z.number().positive().max(1e12),
+        numTrades: z.number().int().min(1).max(5000),
+        winRate: z.number().min(0).max(100),
+        payoffRatio: z.number().positive().max(100),
+        riskPerTrade: z.number().positive().max(100),
+        simulations: z.number().int().min(1).max(2000).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const result = runMonteCarloBacktest(input);
+        await createBacktest(ctx.user.id, {
+          name: input.name,
+          market: input.market,
+          initialCapital: input.initialCapital,
+          finalCapital: result.finalCapital,
+          totalReturn: result.totalReturn,
+          maxDrawdown: result.maxDrawdown,
+          winRate: result.winRate,
+          profitFactor: result.profitFactor,
+          totalTrades: input.numTrades,
+          results: { params: input, ...result },
+        });
+        return result;
+      }),
   }),
 
   risk: router({

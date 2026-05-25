@@ -361,6 +361,40 @@ export async function getUserBacktests(userId: number) {
   return db.select().from(backtests).where(eq(backtests.userId, userId)).orderBy(desc(backtests.createdAt)).limit(100);
 }
 
+export async function createBacktest(userId: number, data: {
+  name: string;
+  market: "dolar" | "acoes" | "daytrade" | "cripto" | "apostas" | "forex" | "indices";
+  initialCapital: number;
+  finalCapital: number;
+  totalReturn: number;
+  maxDrawdown: number;
+  winRate: number;
+  profitFactor: number;
+  totalTrades: number;
+  results: unknown;
+}) {
+  const db = await getDb();
+  if (!db) return { success: false as const };
+  const now = new Date();
+  await db.insert(backtests).values({
+    userId,
+    name: data.name,
+    market: data.market,
+    startDate: now,
+    endDate: now,
+    initialCapital: data.initialCapital.toFixed(2),
+    finalCapital: data.finalCapital.toFixed(2),
+    totalReturn: data.totalReturn.toFixed(2),
+    maxDrawdown: Math.abs(data.maxDrawdown).toFixed(2),
+    winRate: data.winRate.toFixed(2),
+    profitFactor: Math.min(data.profitFactor, 99999).toFixed(2),
+    totalTrades: data.totalTrades,
+    status: "completed",
+    results: JSON.stringify(data.results),
+  });
+  return { success: true as const };
+}
+
 // Risk settings
 export async function getUserRiskSettings(userId: number) {
   const db = await getDb();
