@@ -487,7 +487,7 @@ export const appRouter = router({
         amount: z.number().positive().max(1e12),
         riskProfile: z.enum(["conservador", "moderado", "arrojado", "agressivo"]),
         horizon: z.enum(["curto", "medio", "longo"]),
-        objective: z.enum(["crescimento", "renda", "protecao", "aposentadoria"]),
+        objectives: z.array(z.enum(["crescimento", "renda", "protecao", "aposentadoria"])).min(1).max(4),
         monthlyIncome: z.number().nonnegative().optional(),
         emergencyFund: z.number().nonnegative().optional(),
       }))

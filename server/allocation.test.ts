@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeAllocation } from "./allocation";
 
-const base = { amount: 10000, riskProfile: "moderado" as const, horizon: "medio" as const, objective: "crescimento" as const };
+const base = { amount: 10000, riskProfile: "moderado" as const, horizon: "medio" as const, objectives: ["crescimento" as const] };
 
 describe("computeAllocation", () => {
   it("is deterministic", () => {
@@ -38,11 +38,19 @@ describe("computeAllocation", () => {
   });
 
   it("includes a gold/protection sleeve and a protection tilt boosts it", () => {
-    const plan = computeAllocation({ ...base, objective: "protecao" });
+    const plan = computeAllocation({ ...base, objectives: ["protecao"] });
     const ouro = plan.slices.find(s => s.assetClass === "ouro");
     expect(ouro).toBeDefined();
-    const cresc = computeAllocation({ ...base, objective: "crescimento" }).slices.find(s => s.assetClass === "ouro")?.percent ?? 0;
+    const cresc = computeAllocation({ ...base, objectives: ["crescimento"] }).slices.find(s => s.assetClass === "ouro")?.percent ?? 0;
     expect((ouro?.percent ?? 0)).toBeGreaterThan(cresc);
+  });
+
+  it("accepts multiple objectives", () => {
+    const plan = computeAllocation({ ...base, objectives: ["renda", "protecao"] });
+    const sum = plan.slices.reduce((s, x) => s + x.percent, 0);
+    expect(sum).toBeGreaterThan(99);
+    expect(sum).toBeLessThan(101);
+    expect(plan.slices.find(s => s.assetClass === "fii")).toBeDefined();
   });
 
   it("warns when the emergency reserve is below ~6 months of income", () => {

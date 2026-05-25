@@ -11,7 +11,7 @@ export type AllocationInput = {
   amount: number;
   riskProfile: RiskProfile;
   horizon: Horizon;
-  objective: Objective;
+  objectives: Objective[];
   monthlyIncome?: number;
   emergencyFund?: number;
 };
@@ -97,9 +97,12 @@ export function computeAllocation(input: AllocationInput): AllocationPlan {
   if (input.horizon === "curto") shiftBetween(w, GROWTH, DEFENSIVE, 15);
   else if (input.horizon === "longo") shiftBetween(w, DEFENSIVE, GROWTH, 15);
 
-  // Objective tilt.
-  for (const [k, bonus] of Object.entries(OBJECTIVE_TILT[input.objective])) {
-    w[k] = (w[k] || 0) + bonus;
+  // Objective tilts — combine one or more objectives.
+  const objectives = input.objectives.length > 0 ? input.objectives : (["crescimento"] as Objective[]);
+  for (const obj of objectives) {
+    for (const [k, bonus] of Object.entries(OBJECTIVE_TILT[obj])) {
+      w[k] = (w[k] || 0) + bonus;
+    }
   }
 
   const pct = normalize(w);

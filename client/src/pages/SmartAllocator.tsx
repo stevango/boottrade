@@ -30,7 +30,9 @@ export default function SmartAllocator() {
   const [amount, setAmount] = useState("");
   const [riskProfile, setRiskProfile] = useState("moderado");
   const [horizon, setHorizon] = useState("medio");
-  const [objective, setObjective] = useState("crescimento");
+  const [objectives, setObjectives] = useState<string[]>(["crescimento"]);
+  const toggleObjective = (v: string) =>
+    setObjectives((prev) => prev.includes(v) ? (prev.length > 1 ? prev.filter((o) => o !== v) : prev) : [...prev, v]);
   const [monthlyIncome, setMonthlyIncome] = useState("");
   const [emergencyFund, setEmergencyFund] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -47,7 +49,7 @@ export default function SmartAllocator() {
       amount: amt,
       riskProfile: riskProfile as any,
       horizon: horizon as any,
-      objective: objective as any,
+      objectives: objectives as any,
       monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : undefined,
       emergencyFund: emergencyFund ? parseFloat(emergencyFund) : undefined,
     });
@@ -56,7 +58,7 @@ export default function SmartAllocator() {
   const advisorContext = () => {
     if (!plan) return "";
     const breakdown = plan.slices.map(s => `${s.label}: ${s.percent}% (R$ ${fmtBRL(s.amount)}, ${s.horizon} prazo)`).join("; ");
-    return `Plano de alocação para R$ ${fmtBRL(plan.total)} — perfil ${riskProfile}, horizonte ${horizon}, objetivo ${objective}.
+    return `Plano de alocação para R$ ${fmtBRL(plan.total)} — perfil ${riskProfile}, horizonte ${horizon}, objetivos: ${objectives.join(", ")}.
 Distribuição: ${breakdown}.
 Por horizonte: curto ${plan.byHorizon.curto}%, médio ${plan.byHorizon.medio}%, longo ${plan.byHorizon.longo}%.
 Risco esperado: ${plan.expectedRisk}.${plan.reserveRecommendation ? ` Reserva: ${plan.reserveRecommendation}` : ""}
@@ -144,16 +146,24 @@ Avalie se a distribuição faz sentido, o que corrigir, oportunidades para poten
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm text-muted-foreground">Objetivo</Label>
-                  <Select value={objective} onValueChange={setObjective}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="crescimento">Crescimento de patrimônio</SelectItem>
-                      <SelectItem value="renda">Geração de renda passiva</SelectItem>
-                      <SelectItem value="protecao">Proteção contra inflação</SelectItem>
-                      <SelectItem value="aposentadoria">Aposentadoria</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-sm text-muted-foreground">Objetivos (pode escolher mais de um)</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: "crescimento", label: "Crescimento" },
+                      { value: "renda", label: "Renda passiva" },
+                      { value: "protecao", label: "Proteção (inflação)" },
+                      { value: "aposentadoria", label: "Aposentadoria" },
+                    ].map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => toggleObjective(o.value)}
+                        className={`p-2.5 rounded-lg border text-left text-xs transition-all ${objectives.includes(o.value) ? "border-primary bg-primary/5 text-foreground" : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/50"}`}
+                      >
+                        {objectives.includes(o.value) ? "✓ " : ""}{o.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -210,26 +220,52 @@ Avalie se a distribuição faz sentido, o que corrigir, oportunidades para poten
                   </CardContent>
                 </Card>
 
-                {/* Breakdown table */}
-                <Card className="bg-card border-border">
-                  <CardContent className="p-4 space-y-2">
-                    {plan.slices.map((s, i) => (
-                      <div key={s.assetClass} className="flex items-start justify-between p-3 rounded-lg bg-secondary/30">
-                        <div className="flex items-start gap-3">
-                          <div className="w-3 h-3 rounded-full mt-1 shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                {/* Breakdown grouped by horizon */}
+                {([
+                  { h: "curto" as const, title: "Curto prazo", sub: "até 1 ano · liquidez e segurança" },
+                  { h: "medio" as const, title: "Médio prazo", sub: "1–5 anos · equilíbrio" },
+                  { h: "longo" as const, title: "Longo prazo", sub: "5+ anos · crescimento" },
+                ]).map(({ h, title, sub }) => {
+                  const group = plan.slices.filter((s) => s.horizon === h);
+                  if (group.length === 0) return null;
+                  const groupTotal = group.reduce((a, s) => a + s.amount, 0);
+                  return (
+                    <Card key={h} className="bg-card border-border">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium text-foreground">{s.label} <span className="text-xs text-muted-foreground">• {s.horizon === "medio" ? "médio" : s.horizon} prazo</span></p>
-                            <p className="text-xs text-muted-foreground">{s.rationale}</p>
+                            <CardTitle className="text-sm font-semibold text-foreground">{title}</CardTitle>
+                            <p className="text-[11px] text-muted-foreground">{sub}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-foreground">R$ {fmtBRL(groupTotal)}</p>
+                            <p className="text-[11px] text-muted-foreground">{plan.byHorizon[h]}% do total</p>
                           </div>
                         </div>
-                        <div className="text-right shrink-0 ml-2">
-                          <p className="text-sm font-bold text-foreground">{s.percent}%</p>
-                          <p className="text-xs text-muted-foreground">R$ {fmtBRL(s.amount)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        {group.map((s) => {
+                          const idx = plan.slices.indexOf(s);
+                          return (
+                            <div key={s.assetClass} className="flex items-start justify-between p-3 rounded-lg bg-secondary/30">
+                              <div className="flex items-start gap-3">
+                                <div className="w-3 h-3 rounded-full mt-1 shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">{s.label}</p>
+                                  <p className="text-xs text-muted-foreground">{s.rationale}</p>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0 ml-2">
+                                <p className="text-sm font-bold text-foreground">{s.percent}%</p>
+                                <p className="text-xs text-muted-foreground">R$ {fmtBRL(s.amount)}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
 
                 {/* Reserve + strategy + warnings */}
                 {plan.reserveRecommendation && (
