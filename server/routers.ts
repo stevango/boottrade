@@ -21,7 +21,8 @@ import {
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
-  getUserByEmail, createLocalUser, createBacktest
+  getUserByEmail, createLocalUser, createBacktest,
+  getWatchlist, addWatchlistItem, removeWatchlistItem
 } from "./db";
 import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
@@ -404,8 +405,40 @@ export const appRouter = router({
       }),
   }),
 
+  watchlist: router({
+    list: protectedProcedure.query(async ({ ctx }) => getWatchlist(ctx.user.id)),
+    add: protectedProcedure
+      .input(z.object({ symbol: z.string().trim().min(1).max(20), label: z.string().max(100).optional() }))
+      .mutation(async ({ ctx, input }) => addWatchlistItem(ctx.user.id, input.symbol, input.label)),
+    remove: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => removeWatchlistItem(ctx.user.id, input.id)),
+  }),
+
   market: router({
     configured: protectedProcedure.query(() => ({ configured: isMarketDataConfigured() })),
+    scan: protectedProcedure
+      .input(z.object({ symbols: z.array(z.string().trim().min(1).max(20)).min(1).max(12), range: z.enum(["1y", "2y", "5y", "10y"]).optional() }))
+      .mutation(async ({ input }) => {
+        if (!isMarketDataConfigured()) {
+          return { configured: false as const, results: [], message: "Feed de mercado não configurado. Defina BRAPI_TOKEN no servidor." };
+        }
+        const results: { symbol: string; name: string; trend: string; trendStrength: number; oneYear: number | null; lastPrice: number; score: number; error?: string }[] = [];
+        for (const sym of input.symbols) {
+          try {
+            const history = await fetchDailyHistory(sym, input.range ?? "5y");
+            const signal = analyzeSeries(history.points);
+            if (!signal) { results.push({ symbol: sym, name: sym, trend: "—", trendStrength: 0, oneYear: null, lastPrice: 0, score: 0, error: "sem dados" }); continue; }
+            const oneYear = signal.returns.find(r => r.days === 252)?.percent ?? null;
+            const dir = signal.trend === "alta" ? 1 : signal.trend === "baixa" ? -1 : 0;
+            results.push({ symbol: history.symbol, name: history.name, trend: signal.trend, trendStrength: signal.trendStrength, oneYear, lastPrice: signal.lastPrice, score: dir * signal.trendStrength });
+          } catch {
+            results.push({ symbol: sym, name: sym, trend: "—", trendStrength: 0, oneYear: null, lastPrice: 0, score: 0, error: "falha ao buscar" });
+          }
+        }
+        results.sort((a, b) => b.score - a.score);
+        return { configured: true as const, results, message: null };
+      }),
     analyze: protectedProcedure
       .input(z.object({ symbol: z.string().trim().min(1).max(20), range: z.enum(["1y", "2y", "5y", "10y"]).optional() }))
       .mutation(async ({ input }) => {

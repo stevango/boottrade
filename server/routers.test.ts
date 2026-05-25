@@ -372,6 +372,28 @@ describe("backtests router", () => {
   });
 });
 
+describe("watchlist + market.scan", () => {
+  it("watchlist.list requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.watchlist.list()).rejects.toThrow();
+  });
+
+  it("market.scan returns not-configured without a feed", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const r = await caller.market.scan({ symbols: ["GOLD11", "PETR4"] });
+    expect(r.configured).toBe(false);
+    expect(r.results).toEqual([]);
+  });
+
+  it("market.scan validates the symbol list size", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.market.scan({ symbols: [] })).rejects.toThrow();
+  });
+});
+
 describe("brain.analyzeAsset", () => {
   it("requires authentication", async () => {
     const { ctx } = createPublicContext();

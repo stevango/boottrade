@@ -4,7 +4,7 @@ import {
   InsertUser, users, robots, trades, backtests, riskSettings,
   marketplaceListings, socialPosts, copyTrades, userRobots,
   robotBrain, brainDecisions, portfolioAssets, financialGoals,
-  aiConversations, dailyPnl, brokerConnections
+  aiConversations, dailyPnl, brokerConnections, watchlist
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';
@@ -84,6 +84,32 @@ export async function getUserByOpenId(openId: string) {
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
+}
+
+// Watchlist
+export async function getWatchlist(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(watchlist).where(eq(watchlist.userId, userId)).orderBy(desc(watchlist.createdAt)).limit(50);
+}
+
+export async function addWatchlistItem(userId: number, symbol: string, label?: string) {
+  const db = await getDb();
+  if (!db) return { success: false as const };
+  const clean = symbol.trim().toUpperCase();
+  try {
+    await db.insert(watchlist).values({ userId, symbol: clean, label: label?.trim() || null });
+  } catch {
+    // Unique (userId, symbol) — already in the list; treat as success.
+  }
+  return { success: true as const };
+}
+
+export async function removeWatchlistItem(userId: number, id: number) {
+  const db = await getDb();
+  if (!db) return { success: false as const };
+  await db.delete(watchlist).where(and(eq(watchlist.id, id), eq(watchlist.userId, userId)));
+  return { success: true as const };
 }
 
 // Email/password auth helpers (standalone login, no external OAuth).

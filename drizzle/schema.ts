@@ -294,6 +294,18 @@ export const brokerConnections = mysqlTable("broker_connections", {
   userIdx: index("broker_connections_userId_idx").on(t.userId),
 }));
 
+// Watchlist — assets the user/robots monitor for trend opportunities.
+export const watchlist = mysqlTable("watchlist", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  label: varchar("label", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  userIdx: index("watchlist_userId_idx").on(t.userId),
+  userSymbol: uniqueIndex("watchlist_userId_symbol_unique").on(t.userId, t.symbol),
+}));
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Robot = typeof robots.$inferSelect;

@@ -15,6 +15,13 @@
       "when": 1779654914122,
       "tag": "0001_warm_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1779672878134,
+      "tag": "0002_slim_yellow_claw",
+      "breakpoints": true
     }
   ]
 }
