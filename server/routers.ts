@@ -23,7 +23,7 @@ import {
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
   getUserByEmail, createLocalUser, createBacktest
 } from "./db";
-import { invokeLLM } from "./_core/llm";
+import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
 import { runMonteCarloBacktest } from "./backtest";
 
@@ -347,10 +347,15 @@ export const appRouter = router({
           { role: "user" as const, content: input.message },
         ];
 
+        if (!isLLMConfigured()) {
+          return {
+            response: "O Consultor IA ainda não está configurado neste ambiente. Defina OPENAI_API_KEY (ou outro provedor compatível via LLM_BASE_URL/LLM_MODEL) no servidor para ativar as respostas.",
+            conversationId: input.conversationId,
+          };
+        }
+
         try {
-          const response = await invokeLLM({ messages });
-          const rawContent = response.choices?.[0]?.message?.content;
-          const assistantMessage = (typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent)) || "Desculpe, não consegui processar sua solicitação no momento.";
+          const assistantMessage = (await chatComplete(messages)) || "Desculpe, não consegui processar sua solicitação no momento.";
 
           // Save conversation
           if (input.conversationId) {
@@ -359,6 +364,7 @@ export const appRouter = router({
 
           return { response: assistantMessage, conversationId: input.conversationId };
         } catch (error) {
+          console.error("[AI] chat failed:", error);
           return { response: "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente.", conversationId: input.conversationId };
         }
       }),

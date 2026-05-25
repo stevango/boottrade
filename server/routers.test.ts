@@ -372,6 +372,21 @@ describe("backtests router", () => {
   });
 });
 
+describe("ai.chat", () => {
+  it("requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.ai.chat({ message: "oi" })).rejects.toThrow();
+  });
+
+  it("returns a clear not-configured message when no LLM provider is set", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const r = await caller.ai.chat({ message: "Como está minha carteira?" });
+    expect(r.response).toMatch(/não está configurado/i);
+  });
+});
+
 describe("paper router", () => {
   it("paper.list requires authentication", async () => {
     const { ctx } = createPublicContext();
