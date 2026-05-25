@@ -135,10 +135,57 @@ export async function createLocalUser(data: { openId: string; email: string; nam
 }
 
 // Robot queries
+const ROBOT_CATALOG = [
+  { name: "Athena AI", slug: "athena-ai", market: "indices", riskLevel: "medium", winRate: "82.50", totalReturn: "18.50", drawdown: "3.20", profitFactor: "2.45", iaScore: "9.2", monthlyReturn: "4.80", totalTrades: 1247, status: "active", description: "Especialista em mini índice, opera tendências intradiárias com gestão de risco rígida.", strategy: "Tendência + médias móveis (timeframe 5m), stop curto e alvo 2:1." },
+  { name: "Kraken AI", slug: "kraken-ai", market: "cripto", riskLevel: "high", winRate: "75.30", totalReturn: "24.20", drawdown: "5.80", profitFactor: "1.98", iaScore: "8.7", monthlyReturn: "6.10", totalTrades: 892, status: "active", description: "Opera criptomoedas de alta liquidez em swing curto.", strategy: "Momentum + rompimentos, com trailing stop." },
+  { name: "Odin AI", slug: "odin-ai", market: "forex", riskLevel: "low", winRate: "71.80", totalReturn: "12.80", drawdown: "2.10", profitFactor: "2.12", iaScore: "8.4", monthlyReturn: "3.20", totalTrades: 2103, status: "active", description: "Forex em swing conservador nos pares majors.", strategy: "Reversão à média em suporte/resistência." },
+  { name: "Titan AI", slug: "titan-ai", market: "daytrade", riskLevel: "medium", winRate: "79.10", totalReturn: "15.30", drawdown: "4.50", profitFactor: "2.31", iaScore: "8.9", monthlyReturn: "3.80", totalTrades: 1589, status: "active", description: "Day trade multimercado com foco em consistência.", strategy: "Pullback em tendência confirmada." },
+  { name: "Oracle AI", slug: "oracle-ai", market: "apostas", riskLevel: "high", winRate: "68.40", totalReturn: "8.70", drawdown: "6.20", profitFactor: "1.72", iaScore: "7.8", monthlyReturn: "2.90", totalTrades: 456, status: "testing", description: "Modelo experimental para mercados de apostas esportivas.", strategy: "Valor esperado positivo em linhas mal precificadas." },
+  { name: "Quantum AI", slug: "quantum-ai", market: "dolar", riskLevel: "medium", winRate: "76.90", totalReturn: "16.10", drawdown: "3.80", profitFactor: "2.18", iaScore: "8.6", monthlyReturn: "4.00", totalTrades: 1834, status: "active", description: "Mini dólar com leitura de fluxo intradiário.", strategy: "Breakout de abertura + gestão por ATR." },
+  { name: "Pulse AI", slug: "pulse-ai", market: "acoes", riskLevel: "low", winRate: "73.20", totalReturn: "11.40", drawdown: "2.90", profitFactor: "1.95", iaScore: "8.1", monthlyReturn: "2.80", totalTrades: 967, status: "active", description: "Ações em swing de médio prazo com foco em qualidade.", strategy: "Tendência primária + filtro de força relativa." },
+  { name: "Nexus AI", slug: "nexus-ai", market: "cripto", riskLevel: "low", winRate: "91.20", totalReturn: "9.80", drawdown: "1.20", profitFactor: "3.45", iaScore: "9.5", monthlyReturn: "2.40", totalTrades: 3421, status: "active", description: "Arbitragem entre exchanges de cripto, baixo risco.", strategy: "Spread estatístico com execução rápida." },
+] as const;
+
+let robotsSeeded = false;
+async function ensureRobotsSeeded(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
+  if (robotsSeeded) return;
+  try {
+    const existing = await db.select({ id: robots.id }).from(robots).limit(1);
+    if (existing.length === 0) {
+      await db.insert(robots).values(ROBOT_CATALOG.map(r => ({ ...r, isPublic: true })));
+    }
+  } catch (error) {
+    console.warn("[Robots] seed skipped:", error);
+  }
+  robotsSeeded = true;
+}
+
 export async function getAllRobots() {
   const db = await getDb();
   if (!db) return [];
+  await ensureRobotsSeeded(db);
   return db.select().from(robots).orderBy(desc(robots.iaScore)).limit(200);
+}
+
+// Per-user robot activation (userRobots)
+export async function getUserRobotStatuses(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(userRobots).where(eq(userRobots.userId, userId));
+}
+
+export async function setUserRobotStatus(userId: number, robotId: number, status: "active" | "paused" | "stopped") {
+  const db = await getDb();
+  if (!db) return { success: false as const };
+  const existing = await db.select().from(userRobots)
+    .where(and(eq(userRobots.userId, userId), eq(userRobots.robotId, robotId))).limit(1);
+  if (existing.length === 0) {
+    await db.insert(userRobots).values({ userId, robotId, status });
+  } else {
+    await db.update(userRobots).set({ status, stoppedAt: status === "active" ? null : new Date() })
+      .where(and(eq(userRobots.userId, userId), eq(userRobots.robotId, robotId)));
+  }
+  return { success: true as const, status };
 }
 
 export async function getRobotById(id: number) {

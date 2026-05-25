@@ -12,6 +12,7 @@ import { ENV } from "./_core/env";
 import { hashPassword, verifyPassword } from "./password";
 import {
   getAllRobots, getRobotById, getRobotTrades, getUserTrades, getUserBacktests,
+  getUserRobotStatuses, setUserRobotStatus,
   getUserRiskSettings, getMarketplaceListings, getSocialFeed, getAllUsers,
   getRobotBrain, getBrainDecisions, getPortfolioAssets, getFinancialGoals,
   getDailyPnl, upsertRobotBrain, addBrainDecision, addPortfolioAsset,
@@ -109,6 +110,14 @@ export const appRouter = router({
       .input(z.object({ robotId: z.number(), limit: z.number().optional() }))
       .query(async ({ ctx, input }) => {
         return getRobotTrades(ctx.user.id, input.robotId, input.limit ?? 100);
+      }),
+    myStatuses: protectedProcedure.query(async ({ ctx }) => {
+      return getUserRobotStatuses(ctx.user.id);
+    }),
+    setStatus: protectedProcedure
+      .input(z.object({ robotId: z.number(), status: z.enum(["active", "paused", "stopped"]) }))
+      .mutation(async ({ ctx, input }) => {
+        return setUserRobotStatus(ctx.user.id, input.robotId, input.status);
       }),
   }),
 
