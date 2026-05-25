@@ -325,6 +325,20 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         return addFinancialGoal(ctx.user.id, input);
       }),
+    addMany: protectedProcedure
+      .input(z.object({
+        goals: z.array(z.object({
+          title: z.string().min(1).max(200),
+          targetAmount: z.number().positive(),
+          deadline: z.string().optional(),
+          category: z.enum(["patrimonio", "renda_passiva", "aposentadoria", "emergencia", "projeto", "outro"]).optional(),
+          monthlyContribution: z.number().nonnegative().optional(),
+        })).min(1).max(10),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        for (const g of input.goals) await addFinancialGoal(ctx.user.id, g);
+        return { success: true, count: input.goals.length };
+      }),
     update: protectedProcedure
       .input(z.object({
         id: z.number(),

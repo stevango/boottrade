@@ -372,6 +372,20 @@ describe("backtests router", () => {
   });
 });
 
+describe("goals.addMany", () => {
+  it("requires authentication", async () => {
+    const { ctx } = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.goals.addMany({ goals: [{ title: "Curto", targetAmount: 1000 }] })).rejects.toThrow();
+  });
+
+  it("rejects an empty goals array", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.goals.addMany({ goals: [] })).rejects.toThrow();
+  });
+});
+
 describe("watchlist + market.scan", () => {
   it("watchlist.list requires authentication", async () => {
     const { ctx } = createPublicContext();

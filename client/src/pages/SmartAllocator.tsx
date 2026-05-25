@@ -37,10 +37,37 @@ export default function SmartAllocator() {
   const [emergencyFund, setEmergencyFund] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
 
+  const utils = trpc.useUtils();
   const recommendMutation = trpc.allocation.recommend.useMutation({
     onSuccess: (p) => setPlan(p as Plan),
     onError: () => toast.error("Não foi possível gerar a alocação."),
   });
+
+  const saveGoalsMutation = trpc.goals.addMany.useMutation({
+    onSuccess: (r) => { toast.success(`${r.count} meta(s) criada(s). Acompanhe em Metas.`); utils.goals.list.invalidate(); },
+    onError: () => toast.error("Não foi possível salvar as metas."),
+  });
+
+  const saveAsGoals = () => {
+    if (!plan) return;
+    const now = new Date();
+    const horizonMeta = {
+      curto: { years: 1, category: "emergencia" as const, label: "Curto prazo" },
+      medio: { years: 3, category: "patrimonio" as const, label: "Médio prazo" },
+      longo: { years: 7, category: "aposentadoria" as const, label: "Longo prazo" },
+    };
+    const goals = (["curto", "medio", "longo"] as const)
+      .map((h) => {
+        const total = plan.slices.filter((s) => s.horizon === h).reduce((a, s) => a + s.amount, 0);
+        if (total <= 0) return null;
+        const m = horizonMeta[h];
+        const deadline = new Date(now.getFullYear() + m.years, now.getMonth(), now.getDate());
+        return { title: `Plano de alocação — ${m.label}`, targetAmount: Math.round(total * 100) / 100, category: m.category, deadline: deadline.toISOString() };
+      })
+      .filter((g): g is NonNullable<typeof g> => g !== null);
+    if (goals.length === 0) return;
+    saveGoalsMutation.mutate({ goals });
+  };
 
   const handleAnalyze = () => {
     const amt = parseFloat(amount);
@@ -193,9 +220,14 @@ Avalie se a distribuição faz sentido, o que corrigir, oportunidades para poten
                 {/* Summary */}
                 <Card className="bg-card border-border">
                   <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <CardTitle className="text-base flex items-center gap-2"><PieIcon className="w-4 h-4 text-primary" /> Distribuição sugerida</CardTitle>
-                      <Badge variant="outline" className="text-xs">Risco: <span className={`ml-1 font-semibold ${riskColor[plan.expectedRisk]}`}>{plan.expectedRisk}</span></Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">Risco: <span className={`ml-1 font-semibold ${riskColor[plan.expectedRisk]}`}>{plan.expectedRisk}</span></Badge>
+                        <Button size="sm" variant="outline" className="text-xs" onClick={saveAsGoals} disabled={saveGoalsMutation.isPending}>
+                          {saveGoalsMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Target className="w-3 h-3 mr-1" />} Transformar em metas
+                        </Button>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
