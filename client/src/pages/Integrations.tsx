@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -21,12 +22,19 @@ const ROBOT_MAP = {
   open_finance: ["Athena AI", "Titan AI", "Quantum AI", "Pulse AI", "Odin AI"],
 };
 
+type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key";
+type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
 type ConnectableId = "binance" | "betfair";
-type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: ("apiKey" | "apiSecret" | "appKey" | "username" | "password")[] };
+type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: Field[]; note?: string };
 
 const CONNECTABLES: Connectable[] = [
-  { id: "binance", name: "Binance", logo: "🟡", desc: "Exchange de cripto — saldo read-only via API.", usedBy: ROBOT_MAP.binance, fields: ["apiKey", "apiSecret"] },
-  { id: "betfair", name: "Betfair Exchange", logo: "🎯", desc: "Exchange de apostas esportivas — saldo read-only via API.", usedBy: ROBOT_MAP.betfair, fields: ["appKey", "username", "password"] },
+  { id: "binance", name: "Binance", logo: "🟡", desc: "Exchange de cripto — saldo read-only via API.", usedBy: ROBOT_MAP.binance, fields: [{ name: "apiKey" }, { name: "apiSecret" }] },
+  { id: "betfair", name: "Betfair Brasil (Exchange)", logo: "🎯", desc: "Exchange de apostas — usa o endpoint regulamentado .bet.br (saldo read-only).", usedBy: ROBOT_MAP.betfair,
+    fields: [
+      { name: "appKey" }, { name: "username" }, { name: "password" },
+      { name: "cert", optional: true, multiline: true }, { name: "key", optional: true, multiline: true },
+    ],
+    note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo. Se ainda não tem cert, deixe em branco e tentaremos login interativo primeiro." },
 ];
 
 type SyncData = { balances?: { asset: string; free: string; locked: string }[]; funds?: { availableToBetBalance: number; exposure: number }; note?: string };
@@ -69,14 +77,22 @@ export default function Integrations() {
   const [form, setForm] = useState<Record<string, string>>({});
   const reset = () => { setForm({}); setSelected(null); };
 
-  const openConnect = (item: Connectable) => { setSelected(item); setForm({}); setDialogOpen(true); };
+  const openConnect = (item: Connectable) => {
+    setSelected(item); setForm({}); setDialogOpen(true);
+  };
 
   const submit = () => {
     if (!selected) return;
     for (const f of selected.fields) {
-      if (!form[f]?.trim()) return toast.error(`Informe ${labelFor(f)}.`);
+      if (!f.optional && !form[f.name]?.trim()) return toast.error(`Informe ${labelFor(f.name)}.`);
     }
-    addMutation.mutate({ broker: selected.id, credentials: JSON.stringify(form) });
+    // Drop empty optional fields so the server doesn't receive blanks.
+    const payload: Record<string, string> = {};
+    for (const f of selected.fields) {
+      const v = form[f.name]?.trim();
+      if (v) payload[f.name] = v;
+    }
+    addMutation.mutate({ broker: selected.id, credentials: JSON.stringify(payload) });
   };
 
   const connected = connections ?? [];
@@ -230,22 +246,37 @@ export default function Integrations() {
               <div className="flex items-center gap-2 mb-1"><Shield className="w-4 h-4 text-primary" /><p className="text-xs font-medium text-primary">Conexão Segura (read-only)</p></div>
               <p className="text-xs text-muted-foreground">
                 {selected?.id === "betfair"
-                  ? "Use uma App Key obtida no Betfair Developer Program. Apenas saldo e exposição são lidos — nenhuma aposta é enviada pelo app."
+                  ? "Usa os endpoints regulamentados .bet.br. Apenas saldo e exposição são lidos — nenhuma aposta é enviada pelo app."
                   : "Crie uma API Key na exchange com permissão apenas de leitura."}
                 {" "}Credenciais são criptografadas (AES-256-GCM) e nunca retornam ao navegador.
               </p>
             </div>
+            {selected?.note && (
+              <p className="text-[11px] text-muted-foreground leading-relaxed bg-secondary/40 rounded p-2">{selected.note}</p>
+            )}
             {selected?.fields.map((f) => (
-              <div key={f} className="space-y-2">
-                <Label className="text-sm text-muted-foreground">{labelFor(f)}</Label>
-                <Input
-                  type={f === "username" ? "text" : "password"}
-                  autoComplete="off"
-                  value={form[f] ?? ""}
-                  onChange={(e) => setForm({ ...form, [f]: e.target.value })}
-                  placeholder={placeholderFor(f)}
-                  className="bg-secondary border-border"
-                />
+              <div key={f.name} className="space-y-2">
+                <Label className="text-sm text-muted-foreground">
+                  {labelFor(f.name)}{f.optional && <span className="text-muted-foreground/70"> (opcional)</span>}
+                </Label>
+                {f.multiline ? (
+                  <Textarea
+                    value={form[f.name] ?? ""}
+                    onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
+                    placeholder={placeholderFor(f.name)}
+                    rows={5}
+                    className="bg-secondary border-border font-mono text-[11px]"
+                  />
+                ) : (
+                  <Input
+                    type={f.name === "username" ? "text" : "password"}
+                    autoComplete="off"
+                    value={form[f.name] ?? ""}
+                    onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
+                    placeholder={placeholderFor(f.name)}
+                    className="bg-secondary border-border"
+                  />
+                )}
               </div>
             ))}
             <Button onClick={submit} disabled={addMutation.isPending} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
@@ -323,8 +354,14 @@ function NoteAlready({ name }: { name: string }) {
 }
 
 function labelFor(f: string): string {
-  return ({ apiKey: "API Key", apiSecret: "API Secret", appKey: "App Key (Betfair Developer)", username: "Usuário Betfair", password: "Senha Betfair" } as Record<string, string>)[f] ?? f;
+  return ({ apiKey: "API Key", apiSecret: "API Secret", appKey: "App Key", username: "Usuário", password: "Senha", cert: "Certificado cliente (PEM)", key: "Chave privada do certificado (PEM)" } as Record<string, string>)[f] ?? f;
 }
 function placeholderFor(f: string): string {
-  return ({ apiKey: "Sua API Key", apiSecret: "Seu API Secret", appKey: "App Key da sua conta de developer", username: "seu_usuario", password: "••••••••" } as Record<string, string>)[f] ?? "";
+  return ({
+    apiKey: "Sua API Key", apiSecret: "Seu API Secret",
+    appKey: "App Key da sua conta",
+    username: "seu_usuario", password: "••••••••",
+    cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+    key: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+  } as Record<string, string>)[f] ?? "";
 }

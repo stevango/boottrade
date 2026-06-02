@@ -10,7 +10,6 @@ import {
   ChevronRight,
   FlaskConical,
   LayoutDashboard,
-  Link2,
   Loader2,
   LogOut,
   Menu,

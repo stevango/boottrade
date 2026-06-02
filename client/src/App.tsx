@@ -43,7 +43,6 @@ const AiAdvisor = lazyWithReload(() => import("./pages/AiAdvisor"));
 const Goals = lazyWithReload(() => import("./pages/Goals"));
 const PnL = lazyWithReload(() => import("./pages/PnL"));
 const SmartAllocator = lazyWithReload(() => import("./pages/SmartAllocator"));
-const Brokers = lazyWithReload(() => import("./pages/Brokers"));
 const Opportunities = lazyWithReload(() => import("./pages/Opportunities"));
 const Auditor = lazyWithReload(() => import("./pages/Auditor"));
 const Integrations = lazyWithReload(() => import("./pages/Integrations"));

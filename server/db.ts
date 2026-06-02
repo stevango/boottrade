@@ -728,9 +728,9 @@ export async function syncBrokerConnection(userId: number, id: number) {
     }
 
     if (conn.broker === "betfair") {
-      const { appKey, username, password } = JSON.parse(decryptSecret(conn.credentials || ""));
-      if (!appKey || !username || !password) throw new Error("Credenciais da Betfair ausentes");
-      const funds = await fetchBetfairFunds(appKey, username, password);
+      const creds = JSON.parse(decryptSecret(conn.credentials || "")) as { appKey: string; username: string; password: string; cert?: string; key?: string };
+      if (!creds.appKey || !creds.username || !creds.password) throw new Error("Credenciais da Betfair ausentes");
+      const funds = await fetchBetfairFunds(creds);
       await db.update(brokerConnections).set({
         status: "connected",
         lastSync: new Date(),
