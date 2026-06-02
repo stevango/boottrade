@@ -513,6 +513,7 @@ export const appRouter = router({
         objectives: z.array(z.enum(["crescimento", "renda", "protecao", "aposentadoria"])).min(1).max(4),
         monthlyIncome: z.number().nonnegative().optional(),
         emergencyFund: z.number().nonnegative().optional(),
+        specSleeve: z.object({ enabled: z.boolean(), percent: z.number().min(0.5).max(5).optional() }).optional(),
       }))
       .mutation(async ({ input }) => {
         return computeAllocation(input);

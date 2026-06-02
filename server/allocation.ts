@@ -14,6 +14,7 @@ export type AllocationInput = {
   objectives: Objective[];
   monthlyIncome?: number;
   emergencyFund?: number;
+  specSleeve?: { enabled: boolean; percent?: number };
 };
 
 export type AllocationSlice = {
@@ -47,6 +48,7 @@ const CLASS_META: Record<string, { label: string; horizon: Horizon; rationale: s
   ouro: { label: "Ouro / Proteção", horizon: "longo", rationale: "Reserva de valor e hedge contra crises e desvalorização cambial." },
   cripto: { label: "Criptomoedas", horizon: "longo", rationale: "Alto risco/retorno; manter pequeno e diversificado." },
   fundos: { label: "Fundos Multimercado", horizon: "medio", rationale: "Gestão ativa entre classes." },
+  apostas: { label: "Especulação esportiva (Copa) — caixa isolado", horizon: "curto", rationale: "Caixa de entretenimento, capado e separado do plano de patrimônio. Use Paper Trade antes; rode com bankroll fixo e stop diário (ex.: Oracle AI)." },
 };
 
 const BASE: Record<RiskProfile, Weights> = {
@@ -105,7 +107,18 @@ export function computeAllocation(input: AllocationInput): AllocationPlan {
     }
   }
 
-  const pct = normalize(w);
+  let pct = normalize(w);
+
+  // Optional speculation sleeve (e.g., World Cup): a capped, isolated cash
+  // bucket for entertainment/short-term speculation, NOT counted as patrimony.
+  const sleeveEnabled = !!input.specSleeve?.enabled;
+  const sleevePct = sleeveEnabled ? Math.min(5, Math.max(0.5, input.specSleeve?.percent ?? 2)) : 0;
+  if (sleevePct > 0) {
+    const scaled: Weights = {};
+    for (const [k, v] of Object.entries(pct)) scaled[k] = (v * (100 - sleevePct)) / 100;
+    scaled.apostas = sleevePct;
+    pct = scaled;
+  }
 
   // Build slices with rounded amounts that sum exactly to total.
   const entries = Object.entries(pct).sort((a, b) => b[1] - a[1]);
@@ -147,6 +160,7 @@ export function computeAllocation(input: AllocationInput): AllocationPlan {
   ];
   if (cripto >= 10) warnings.push("A fatia de cripto é volátil — considere limites e custódia segura.");
   if (input.horizon === "curto") warnings.push("Para curto prazo, evite concentrar em ativos voláteis: a prioridade é preservar capital e liquidez.");
+  if (sleevePct > 0) warnings.push(`Caixa de especulação esportiva (${sleevePct}%) é entretenimento, não patrimônio. Use bankroll fixo, stop diário e teste no Paper Trade antes — perdas neste caixa não devem comprometer o plano.`);
 
   const strategy = input.riskProfile === "conservador"
     ? "Renda fixa pode ser alocada de imediato. Faça os ativos de risco em poucos aportes para suavizar o preço médio."

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Sparkles, DollarSign, Target, TrendingUp, Shield, Zap, Loader2, PieChart as PieIcon, AlertTriangle, Info } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { trpc } from "@/lib/trpc";
@@ -31,6 +32,8 @@ export default function SmartAllocator() {
   const [riskProfile, setRiskProfile] = useState("moderado");
   const [horizon, setHorizon] = useState("medio");
   const [objectives, setObjectives] = useState<string[]>(["crescimento"]);
+  const [specEnabled, setSpecEnabled] = useState(false);
+  const [specPercent, setSpecPercent] = useState("2");
   const toggleObjective = (v: string) =>
     setObjectives((prev) => prev.includes(v) ? (prev.length > 1 ? prev.filter((o) => o !== v) : prev) : [...prev, v]);
   const [monthlyIncome, setMonthlyIncome] = useState("");
@@ -79,6 +82,7 @@ export default function SmartAllocator() {
       objectives: objectives as any,
       monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : undefined,
       emergencyFund: emergencyFund ? parseFloat(emergencyFund) : undefined,
+      specSleeve: specEnabled ? { enabled: true, percent: Math.min(5, Math.max(0.5, parseFloat(specPercent) || 2)) } : undefined,
     });
   };
 
@@ -192,6 +196,26 @@ Avalie se a distribuição faz sentido, o que corrigir, oportunidades para poten
                     ))}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-3"><CardTitle className="text-base">Caixa de especulação (opcional)</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-start justify-between gap-3 p-3 rounded-lg bg-secondary/30">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Aproveitar a Copa</p>
+                    <p className="text-xs text-muted-foreground">Caixa isolado e capado para trade esportivo (ex.: Oracle AI). Não conta como patrimônio.</p>
+                  </div>
+                  <Switch checked={specEnabled} onCheckedChange={setSpecEnabled} />
+                </div>
+                {specEnabled && (
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">% do capital (máx. 5%)</Label>
+                    <Input type="number" step="0.5" min="0.5" max="5" value={specPercent} onChange={(e) => setSpecPercent(e.target.value)} className="bg-secondary border-border" />
+                    <p className="text-[11px] text-muted-foreground">Recomendado: 1–3%. Teste a estratégia no Paper Trade antes e use bankroll fixo + stop diário.</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

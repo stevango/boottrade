@@ -61,4 +61,22 @@ describe("computeAllocation", () => {
   it("always returns risk caveats", () => {
     expect(computeAllocation(base).warnings.length).toBeGreaterThan(0);
   });
+
+  it("speculation sleeve is capped, isolated and adds a warning", () => {
+    const plan = computeAllocation({ ...base, amount: 10000, specSleeve: { enabled: true, percent: 3 } });
+    const apostas = plan.slices.find((s) => s.assetClass === "apostas");
+    expect(apostas).toBeDefined();
+    expect(apostas!.percent).toBeCloseTo(3, 1);
+    expect(plan.warnings.some((w) => w.toLowerCase().includes("especulação"))).toBe(true);
+    // Sum still ~100%.
+    const sum = plan.slices.reduce((s, x) => s + x.percent, 0);
+    expect(sum).toBeGreaterThan(99);
+    expect(sum).toBeLessThan(101);
+  });
+
+  it("speculation sleeve is hard-capped at 5%", () => {
+    const plan = computeAllocation({ ...base, specSleeve: { enabled: true, percent: 50 } });
+    const apostas = plan.slices.find((s) => s.assetClass === "apostas");
+    expect(apostas!.percent).toBeCloseTo(5, 1);
+  });
 });
