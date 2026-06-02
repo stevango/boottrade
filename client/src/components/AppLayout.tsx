@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   PieChart,
+  Plug2,
   Radar,
   Shield,
   ShoppingBag,
@@ -43,7 +44,7 @@ const navItems = [
   { path: "/marketplace", label: "Marketplace", icon: ShoppingBag },
   { path: "/social", label: "Social Trading", icon: Users },
   { path: "/calendar", label: "Calendário", icon: Calendar },
-  { path: "/brokers", label: "Corretoras", icon: Link2 },
+  { path: "/integrations", label: "Integrações", icon: Plug2 },
 ];
 
 const adminItems = [

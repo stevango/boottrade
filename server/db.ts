@@ -9,6 +9,7 @@ import {
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';
 import { fetchBinanceBalances } from './binance';
+import { fetchBetfairFunds } from './betfair';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -724,6 +725,18 @@ export async function syncBrokerConnection(userId: number, id: number) {
         syncData: JSON.stringify({ balances, syncedAt: Date.now() }),
       }).where(scope);
       return { success: true, count: balances.length };
+    }
+
+    if (conn.broker === "betfair") {
+      const { appKey, username, password } = JSON.parse(decryptSecret(conn.credentials || ""));
+      if (!appKey || !username || !password) throw new Error("Credenciais da Betfair ausentes");
+      const funds = await fetchBetfairFunds(appKey, username, password);
+      await db.update(brokerConnections).set({
+        status: "connected",
+        lastSync: new Date(),
+        syncData: JSON.stringify({ funds, syncedAt: Date.now() }),
+      }).where(scope);
+      return { success: true, count: 1 };
     }
 
     // Live sync not yet available for this broker (traditional brokers need

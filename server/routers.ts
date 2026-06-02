@@ -361,6 +361,7 @@ export const appRouter = router({
   }),
 
   ai: router({
+    configured: protectedProcedure.query(() => ({ configured: isLLMConfigured() })),
     chat: protectedProcedure
       .input(z.object({
         message: z.string().min(1).max(2000),
