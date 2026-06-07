@@ -165,6 +165,17 @@ export async function getUserByEmail(email: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+// One-time admin bootstrap: promote the calling user if no admin exists yet.
+// Safe — once an admin exists this becomes a no-op.
+export async function promoteToAdminIfNoAdmin(userId: number): Promise<{ promoted: boolean }> {
+  const db = await getDb();
+  if (!db) return { promoted: false };
+  const admins = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+  if (admins.length > 0) return { promoted: false };
+  await db.update(users).set({ role: "admin" }).where(eq(users.id, userId));
+  return { promoted: true };
+}
+
 export async function createLocalUser(data: { openId: string; email: string; name: string; passwordHash: string }) {
   const db = await getDb();
   if (!db) return undefined;

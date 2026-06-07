@@ -24,7 +24,7 @@ import {
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
   getUserByEmail, createLocalUser, createBacktest,
   getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats,
-  getAppSettingMeta, setAppSetting, deleteAppSetting
+  getAppSettingMeta, setAppSetting, deleteAppSetting, promoteToAdminIfNoAdmin
 } from "./db";
 import { chatComplete, isLLMConfigured, testLLMConnection } from "./llm";
 import { rateLimit } from "./rateLimit";
@@ -73,9 +73,19 @@ export const appRouter = router({
         if (!user) {
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Não foi possível criar a conta." });
         }
+        // Bootstrap: first registered user becomes admin (no-op once an admin exists).
+        const promo = await promoteToAdminIfNoAdmin(user.id);
+        if (promo.promoted) user.role = "admin";
         await setSessionCookie(ctx, user);
         return toPublicUser(user);
       }),
+    claimAdminBootstrap: protectedProcedure.mutation(async ({ ctx }) => {
+      const result = await promoteToAdminIfNoAdmin(ctx.user.id);
+      if (!result.promoted) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Já existe um admin no sistema. Peça promoção a quem é admin (ou via SQL)." });
+      }
+      return { success: true, role: "admin" as const };
+    }),
     login: publicProcedure
       .input(z.object({
         email: z.string().trim().email().max(320),

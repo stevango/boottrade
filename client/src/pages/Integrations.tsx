@@ -122,15 +122,7 @@ export default function Integrations() {
             <Plug2 className="w-7 h-7 text-primary" /> Integrações
           </h1>
           <p className="text-muted-foreground">Veja o que está conectado, configure tokens e teste cada provedor</p>
-          {!isAdmin && (
-            <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-warning/5 border border-warning/20">
-              <Info className="w-4 h-4 text-warning mt-0.5 shrink-0" />
-              <div className="text-xs text-muted-foreground leading-relaxed">
-                <strong className="text-foreground">Você não é admin.</strong> Para salvar tokens dos provedores de servidor (OpenAI, brapi, Odds), promova seu usuário com:
-                {" "}<code className="text-primary">UPDATE users SET role='admin' WHERE email='{user?.email ?? "seu@email.com"}';</code>
-              </div>
-            </div>
-          )}
+          {!isAdmin && <BootstrapAdminBanner email={user?.email ?? null} />}
         </div>
 
         {/* Conectadas */}
@@ -312,6 +304,34 @@ export default function Integrations() {
         </DialogContent>
       </Dialog>
     </AppLayout>
+  );
+}
+
+function BootstrapAdminBanner({ email }: { email: string | null }) {
+  const utils = trpc.useUtils();
+  const { refresh } = useAuth();
+  const claim = trpc.auth.claimAdminBootstrap.useMutation({
+    onSuccess: async () => {
+      toast.success("Você agora é admin. Recarregando...");
+      await utils.auth.me.invalidate();
+      await refresh();
+      // Hard reload so all admin-gated UIs revalidate cleanly.
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onError: (e) => toast.error(e.message || "Não foi possível promover."),
+  });
+  return (
+    <div className="mt-3 p-3 rounded-lg bg-warning/5 border border-warning/20 flex flex-col sm:flex-row sm:items-center gap-3">
+      <Info className="w-4 h-4 text-warning shrink-0" />
+      <div className="text-xs text-muted-foreground leading-relaxed flex-1">
+        <strong className="text-foreground">Você não é admin.</strong> Para salvar tokens dos provedores de servidor (OpenAI, brapi, Odds), você precisa ser admin.
+        {" "}Se ainda <strong>não existe nenhum admin</strong> no sistema, clique no botão ao lado para se tornar o primeiro (uma vez só — depois disso a opção fecha).
+        {" "}Alternativa: <code className="text-primary">UPDATE users SET role='admin' WHERE email='{email ?? "seu@email.com"}';</code>
+      </div>
+      <Button size="sm" onClick={() => claim.mutate()} disabled={claim.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground shrink-0">
+        {claim.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Promovendo...</> : <><Shield className="w-3 h-3 mr-1" /> Tornar-me admin</>}
+      </Button>
+    </div>
   );
 }
 
