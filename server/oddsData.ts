@@ -3,6 +3,7 @@
 // the Oracle AI brain. Pure helpers; no execution endpoints exist on this API.
 
 import { getAppSetting } from "./db";
+import { computeValueBets, type NormalizedEvent, type ValueBet } from "./oddsAnalysis";
 
 const BASE = "https://api.the-odds-api.com/v4";
 const SETTING_KEY = "ODDS_API_KEY";
@@ -28,18 +29,7 @@ type ApiBookmaker = { key: string; title: string; last_update: string; markets: 
 type ApiEvent = { id: string; sport_key: string; commence_time: string; home_team: string; away_team: string; bookmakers: ApiBookmaker[] };
 
 export type Sport = { key: string; title: string; group: string; active: boolean };
-export type ValueBet = {
-  event: string;
-  commence: string;
-  market: string;       // h2h, totals, spreads
-  outcome: string;      // team / over / under
-  point?: number;       // for totals/spreads
-  bestBook: string;
-  bestPrice: number;
-  avgPrice: number;
-  booksCount: number;
-  edgePct: number;      // (bestPrice / avgPrice - 1) * 100
-};
+export type { ValueBet };
 
 async function call<T>(path: string, params: Record<string, string>): Promise<T> {
   const apiKey = await getOddsApiKey();
@@ -72,49 +62,16 @@ export async function fetchOpportunities(opts: {
   };
   if (opts.bookmakers) params.bookmakers = opts.bookmakers;
   const events = await call<ApiEvent[]>(`/sports/${encodeURIComponent(opts.sport)}/odds`, params);
-  const minEdge = opts.edgeThresholdPct ?? 3;
-
-  type BetEntry = { book: string; price: number };
-  type BetBucket = { name: string; point?: number; market: string; entries: BetEntry[] };
-
-  const valueBets: ValueBet[] = [];
-  for (const ev of events) {
-    // Index by market.key + outcome.name + outcome.point → list of {book, price}.
-    const buckets = new Map<string, BetBucket>();
-    for (const bm of ev.bookmakers ?? []) {
-      for (const mk of bm.markets ?? []) {
-        for (const oc of mk.outcomes ?? []) {
-          if (!Number.isFinite(oc.price) || oc.price <= 1) continue;
-          const k = `${mk.key}|${oc.name}|${oc.point ?? ""}`;
-          let b = buckets.get(k);
-          if (!b) { b = { name: oc.name, point: oc.point, market: mk.key, entries: [] }; buckets.set(k, b); }
-          b.entries.push({ book: bm.title, price: oc.price });
-        }
-      }
-    }
-    const bucketArr: BetBucket[] = Array.from(buckets.values());
-    for (const b of bucketArr) {
-      if (b.entries.length < 2) continue;
-      const prices: number[] = b.entries.map((e: BetEntry) => e.price);
-      const avg = prices.reduce((a: number, p: number) => a + p, 0) / prices.length;
-      const best = b.entries.reduce((a: BetEntry, c: BetEntry) => (c.price > a.price ? c : a));
-      const edgePct = ((best.price / avg) - 1) * 100;
-      if (edgePct >= minEdge) {
-        valueBets.push({
-          event: `${ev.home_team} × ${ev.away_team}`,
-          commence: ev.commence_time,
-          market: b.market,
-          outcome: b.name,
-          point: b.point,
-          bestBook: best.book,
-          bestPrice: best.price,
-          avgPrice: Math.round(avg * 1000) / 1000,
-          booksCount: b.entries.length,
-          edgePct: Math.round(edgePct * 10) / 10,
-        });
-      }
-    }
-  }
-  valueBets.sort((a, b) => b.edgePct - a.edgePct);
+  const normalized: NormalizedEvent[] = events.map(ev => ({
+    id: ev.id,
+    commenceTime: ev.commence_time,
+    home: ev.home_team,
+    away: ev.away_team,
+    bookmakers: (ev.bookmakers ?? []).map(bm => ({
+      name: bm.title,
+      markets: (bm.markets ?? []).map(mk => ({ key: mk.key, outcomes: mk.outcomes ?? [] })),
+    })),
+  }));
+  const valueBets = computeValueBets(normalized, opts.edgeThresholdPct ?? 3);
   return { events, valueBets };
 }

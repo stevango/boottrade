@@ -220,11 +220,12 @@ export default function Integrations() {
             name="Odds-API.io (esportes)" logo="🎰" envVar="ODDS_IO_API_KEY"
             configured={!!oddsIoCfg?.configured}
             desc="Alternativa ao The Odds API: 265+ casas, 34 esportes, free tier de 100 req/hora (sem cartão). WebSocket disponível em planos pagos."
-            usedBy={["Oracle AI (alternativa de feed)"]}
+            usedBy={["Oracle AI (alternativa de feed)", "Scanner de Esportes (Oportunidades)"]}
             docsUrl="https://docs.odds-api.io"
           >
             <AdminSecretSetting settingKey="ODDS_IO_API_KEY" placeholder="Cole seu token do Odds-API.io"
-              onSaved={() => { utils.oddsIo.configured.invalidate(); }} />
+              onSaved={() => { utils.oddsIo.configured.invalidate(); utils.oddsIo.sports.invalidate(); }} />
+            {oddsIoCfg?.configured && <OddsIoTester />}
           </ServerIntegration>
         </Section>
 
@@ -356,6 +357,21 @@ function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, docsU
 }
 
 type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY";
+
+function OddsIoTester() {
+  const sportsQ = trpc.oddsIo.sports.useQuery();
+  const sports = (sportsQ.data as any)?.sports as { key: string; title: string }[] | undefined;
+  const error = (sportsQ.data as any)?.error;
+  if (sportsQ.isLoading) return <p className="text-[11px] text-muted-foreground mt-2"><Loader2 className="w-3 h-3 inline animate-spin mr-1" /> Buscando /sports...</p>;
+  if (error) return <p className="text-[11px] text-loss mt-2 bg-loss/5 border border-loss/20 rounded p-2">⚠ {error}</p>;
+  if (!sports) return null;
+  if (sports.length === 0) return <p className="text-[11px] text-warning mt-2">/sports retornou vazio — token pode estar inválido ou sem permissão.</p>;
+  return (
+    <div className="text-[11px] text-muted-foreground mt-2 bg-profit/5 border border-profit/20 rounded p-2">
+      ✓ {sports.length} esportes disponíveis: <span className="text-foreground">{sports.slice(0, 5).map(s => s.title).join(", ")}{sports.length > 5 ? "…" : ""}</span>
+    </div>
+  );
+}
 
 function AdminSecretSetting({ settingKey, placeholder, onSaved }: { settingKey: SecretKey; placeholder: string; onSaved?: () => void }) {
   const { user } = useAuth();

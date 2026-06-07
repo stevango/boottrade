@@ -33,7 +33,7 @@ import { computeAllocation } from "./allocation";
 import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
-import { isOddsIoConfigured, fetchSports as fetchOddsIoSports } from "./oddsIo";
+import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -498,6 +498,24 @@ export const appRouter = router({
         return { configured: true as const, sports: [], error: String(error).slice(0, 200) };
       }
     }),
+    opportunities: protectedProcedure
+      .input(z.object({
+        sport: z.string().trim().min(1).max(80),
+        bookmakers: z.string().trim().max(200).optional(),
+        edgeThresholdPct: z.number().min(0).max(50).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        if (!(await isOddsIoConfigured())) {
+          return { configured: false as const, valueBets: [], message: "Feed Odds-API.io não configurado." };
+        }
+        try {
+          const { valueBets, eventCount } = await fetchOddsIoOpportunities(input);
+          return { configured: true as const, valueBets, eventCount, message: null };
+        } catch (error) {
+          console.error("[oddsIo] opportunities failed:", error);
+          return { configured: true as const, valueBets: [], eventCount: 0, message: `Falha ao buscar: ${String(error).slice(0, 200)}` };
+        }
+      }),
   }),
 
   watchlist: router({

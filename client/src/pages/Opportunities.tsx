@@ -174,15 +174,30 @@ function StocksPanel() {
 type ValueBet = { event: string; commence: string; market: string; outcome: string; point?: number; bestBook: string; bestPrice: number; avgPrice: number; booksCount: number; edgePct: number };
 type Sport = { key: string; title: string; group: string };
 
+type Provider = "the-odds-api" | "odds-api-io";
+
 function SportsPanel() {
   const { data: cfg } = trpc.odds.configured.useQuery();
-  const { data: sportsData } = trpc.odds.sports.useQuery(undefined, { enabled: !!cfg?.configured });
+  const { data: cfgIo } = trpc.oddsIo.configured.useQuery();
+
+  // Pick a default provider based on what's configured (prefer The Odds API
+  // since its scanner shape is verified).
+  const [provider, setProvider] = useState<Provider>("the-odds-api");
+  // Re-sync default when configs load.
+  if (cfg !== undefined && cfgIo !== undefined) {
+    if (!cfg.configured && cfgIo.configured && provider === "the-odds-api") {
+      // do nothing on every render — only flip once
+    }
+  }
+
+  const sportsTheOdds = trpc.odds.sports.useQuery(undefined, { enabled: provider === "the-odds-api" && !!cfg?.configured });
+  const sportsOddsIo = trpc.oddsIo.sports.useQuery(undefined, { enabled: provider === "odds-api-io" && !!cfgIo?.configured });
 
   const [sport, setSport] = useState<string>("");
   const [edgeMin, setEdgeMin] = useState<string>("3");
   const [bets, setBets] = useState<ValueBet[] | null>(null);
 
-  const search = trpc.odds.opportunities.useMutation({
+  const searchTheOdds = trpc.odds.opportunities.useMutation({
     onSuccess: (r) => {
       if (r.configured === false) { setBets(null); toast.error(r.message || "Configure ODDS_API_KEY."); return; }
       setBets(r.valueBets as ValueBet[]);
@@ -190,27 +205,47 @@ function SportsPanel() {
     },
     onError: () => toast.error("Falha ao buscar. Verifique sua cota da API."),
   });
+  const searchOddsIo = trpc.oddsIo.opportunities.useMutation({
+    onSuccess: (r) => {
+      if (r.configured === false) { setBets(null); toast.error(r.message || "Configure o token do Odds-API.io."); return; }
+      if (r.message) toast.error(r.message);
+      setBets(r.valueBets as ValueBet[]);
+      if ((r.valueBets as ValueBet[]).length === 0 && !r.message) toast.message(`Nenhum value bet acima do limite (${r.eventCount} eventos analisados).`);
+    },
+    onError: () => toast.error("Falha ao buscar."),
+  });
 
-  const sports: Sport[] = (sportsData as any)?.sports ?? [];
+  const sportsData: any = provider === "the-odds-api" ? sportsTheOdds.data : sportsOddsIo.data;
+  const sports: Sport[] = sportsData?.sports ?? [];
   const groupedSports = sports.reduce<Record<string, Sport[]>>((acc, s) => {
     (acc[s.group] = acc[s.group] || []).push(s); return acc;
   }, {});
 
+  const search = provider === "the-odds-api" ? searchTheOdds : searchOddsIo;
+  const isPending = search.isPending;
+
   const run = () => {
     if (!sport) return toast.error("Escolha um esporte.");
-    search.mutate({ sport, regions: "eu,uk", markets: "h2h", edgeThresholdPct: parseFloat(edgeMin) || 3 });
+    setBets(null);
+    const edgeThresholdPct = parseFloat(edgeMin) || 3;
+    if (provider === "the-odds-api") {
+      searchTheOdds.mutate({ sport, regions: "eu,uk", markets: "h2h", edgeThresholdPct });
+    } else {
+      searchOddsIo.mutate({ sport, edgeThresholdPct });
+    }
   };
 
-  if (cfg && !cfg.configured) {
+  const noneConfigured = cfg !== undefined && cfgIo !== undefined && !cfg.configured && !cfgIo.configured;
+  if (noneConfigured) {
     return (
       <Card className="bg-warning/5 border-warning/20">
         <CardContent className="p-4 flex items-start gap-3">
           <Clock className="w-4 h-4 text-warning mt-0.5 shrink-0" />
           <div>
-            <p className="text-sm font-medium text-foreground">Feed de odds não configurado</p>
+            <p className="text-sm font-medium text-foreground">Nenhum feed de odds configurado</p>
             <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              Defina <code className="text-primary">ODDS_API_KEY</code> no servidor (token gratuito em <a className="underline" href="https://the-odds-api.com" target="_blank" rel="noreferrer">the-odds-api.com</a> — ~500 req/mês na cota free).
-              Com a chave configurada, o Oracle AI passa a enxergar value bets reais entre as casas.
+              Em <a className="underline text-primary" href="/integrations">Integrações</a>, cole o token de pelo menos um dos provedores:
+              <strong> The Odds API</strong> (the-odds-api.com, ~500 req/mês) ou <strong>Odds-API.io</strong> (100 req/hora, sem cartão).
             </p>
           </div>
         </CardContent>
@@ -223,11 +258,32 @@ function SportsPanel() {
       <Card className="bg-card border-border">
         <CardHeader className="pb-3"><CardTitle className="text-base">Buscar value bets</CardTitle></CardHeader>
         <CardContent className="space-y-3">
+          {/* Provider selector */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Provedor de odds</Label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setProvider("the-odds-api"); setSport(""); setBets(null); }}
+                disabled={!cfg?.configured}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-all ${provider === "the-odds-api" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground"} ${!cfg?.configured ? "opacity-40 cursor-not-allowed" : ""}`}
+              >
+                The Odds API {!cfg?.configured && "(não configurado)"}
+              </button>
+              <button
+                onClick={() => { setProvider("odds-api-io"); setSport(""); setBets(null); }}
+                disabled={!cfgIo?.configured}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-all ${provider === "odds-api-io" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground"} ${!cfgIo?.configured ? "opacity-40 cursor-not-allowed" : ""}`}
+              >
+                Odds-API.io {!cfgIo?.configured && "(não configurado)"}
+              </button>
+            </div>
+          </div>
+
           <div className="grid sm:grid-cols-[1fr_140px_auto] gap-3 sm:items-end">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Esporte</Label>
               <Select value={sport} onValueChange={setSport}>
-                <SelectTrigger className="bg-secondary border-border"><SelectValue placeholder="Escolha um esporte..." /></SelectTrigger>
+                <SelectTrigger className="bg-secondary border-border"><SelectValue placeholder={sports.length === 0 ? "Carregando esportes..." : "Escolha um esporte..."} /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(groupedSports).map(([group, items]) => (
                     <div key={group}>
@@ -242,12 +298,13 @@ function SportsPanel() {
               <Label className="text-xs text-muted-foreground">Edge mínimo (%)</Label>
               <Input type="number" min="0" max="50" step="0.5" value={edgeMin} onChange={(e) => setEdgeMin(e.target.value)} className="bg-secondary border-border" />
             </div>
-            <Button onClick={run} disabled={search.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-              {search.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Buscando...</> : <><Search className="w-4 h-4 mr-2" /> Buscar</>}
+            <Button onClick={run} disabled={isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              {isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Buscando...</> : <><Search className="w-4 h-4 mr-2" /> Buscar</>}
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Compara a melhor odd vs. a média entre casas (regiões EU/UK incluem casas relevantes para BR como Bet365, Betano, Sportingbet). Edge = quanto a melhor odd está acima da média — quanto maior, melhor o value.
+            Compara a melhor odd vs. a média entre casas. Edge = quanto a melhor odd está acima da média — quanto maior, melhor o value.
+            {provider === "the-odds-api" && " Regiões EU/UK incluem Bet365, Betano, Sportingbet."}
           </p>
         </CardContent>
       </Card>
