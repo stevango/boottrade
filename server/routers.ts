@@ -33,6 +33,7 @@ import { computeAllocation } from "./allocation";
 import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
+import { isOddsIoConfigured, fetchSports as fetchOddsIoSports } from "./oddsIo";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -485,6 +486,20 @@ export const appRouter = router({
       }),
   }),
 
+  oddsIo: router({
+    configured: protectedProcedure.query(async () => ({ configured: await isOddsIoConfigured() })),
+    sports: protectedProcedure.query(async () => {
+      if (!(await isOddsIoConfigured())) return { configured: false as const, sports: [] };
+      try {
+        const sports = await fetchOddsIoSports();
+        return { configured: true as const, sports };
+      } catch (error) {
+        console.error("[oddsIo] sports failed:", error);
+        return { configured: true as const, sports: [], error: String(error).slice(0, 200) };
+      }
+    }),
+  }),
+
   watchlist: router({
     list: protectedProcedure.query(async ({ ctx }) => getWatchlist(ctx.user.id)),
     add: protectedProcedure
@@ -569,27 +584,28 @@ export const appRouter = router({
     // App-wide settings management. Keys are whitelisted so the UI can't
     // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
     getSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]) }))
       .query(async ({ input }) => {
         return getAppSettingMeta(input.key);
       }),
     setSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY"]), value: z.string().min(1).max(512) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]), value: z.string().min(1).max(512) }))
       .mutation(async ({ input }) => {
         return setAppSetting(input.key, input.value.trim());
       }),
     clearSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]) }))
       .mutation(async ({ input }) => {
         return deleteAppSetting(input.key);
       }),
     diagnostics: adminProcedure.query(async () => {
-      const [stats, oddsCfg] = await Promise.all([getSystemStats(), isOddsConfigured()]);
+      const [stats, oddsCfg, oddsIoCfg] = await Promise.all([getSystemStats(), isOddsConfigured(), isOddsIoConfigured()]);
       return {
         dbConnected: stats !== null,
         llmConfigured: isLLMConfigured(),
         marketDataConfigured: isMarketDataConfigured(),
         oddsConfigured: oddsCfg,
+        oddsIoConfigured: oddsIoCfg,
         counts: stats ?? { users: 0, robots: 0, trades: 0, brokers: 0, backtests: 0 },
         security: {
           brokerCredentialsEncrypted: true,

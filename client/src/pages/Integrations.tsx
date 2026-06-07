@@ -76,6 +76,7 @@ export default function Integrations() {
   const { data: aiCfg } = trpc.ai.configured.useQuery();
   const { data: marketCfg } = trpc.market.configured.useQuery();
   const { data: oddsCfg } = trpc.odds.configured.useQuery();
+  const { data: oddsIoCfg } = trpc.oddsIo.configured.useQuery();
   const utils = trpc.useUtils();
 
   const addMutation = trpc.brokers.connect.useMutation({
@@ -208,10 +209,22 @@ export default function Integrations() {
           <ServerIntegration
             name="The Odds API (esportes)" logo="🎲" envVar="ODDS_API_KEY"
             configured={!!oddsCfg?.configured}
-            desc="Odds em tempo real de 200+ casas (Bet365, Betano, Sportingbet…). Alimenta o scanner de value bets em /opportunities e os sinais esportivos do Oracle AI. Plano free ~500 req/mês."
+            desc="Odds em tempo real de 200+ casas. Plano free ~500 req/mês. Alimenta o scanner de value bets em /opportunities e os sinais esportivos do Oracle AI."
             usedBy={["Oracle AI", "Scanner de Esportes (Oportunidades)"]}
+            docsUrl="https://the-odds-api.com/liveapi/guides/v4/"
           >
-            <OddsAdminSetting />
+            <AdminSecretSetting settingKey="ODDS_API_KEY" placeholder="Cole seu token da The Odds API"
+              onSaved={() => { utils.odds.configured.invalidate(); utils.odds.sports.invalidate(); }} />
+          </ServerIntegration>
+          <ServerIntegration
+            name="Odds-API.io (esportes)" logo="🎰" envVar="ODDS_IO_API_KEY"
+            configured={!!oddsIoCfg?.configured}
+            desc="Alternativa ao The Odds API: 265+ casas, 34 esportes, free tier de 100 req/hora (sem cartão). WebSocket disponível em planos pagos."
+            usedBy={["Oracle AI (alternativa de feed)"]}
+            docsUrl="https://docs.odds-api.io"
+          >
+            <AdminSecretSetting settingKey="ODDS_IO_API_KEY" placeholder="Cole seu token do Odds-API.io"
+              onSaved={() => { utils.oddsIo.configured.invalidate(); }} />
           </ServerIntegration>
         </Section>
 
@@ -313,7 +326,7 @@ function Section({ title, icon: Icon, children }: { title: string; icon: typeof 
   );
 }
 
-function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, children }: { name: string; logo: string; envVar: string; configured: boolean; desc: string; usedBy: string[]; children?: React.ReactNode }) {
+function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, docsUrl, children }: { name: string; logo: string; envVar: string; configured: boolean; desc: string; usedBy: string[]; docsUrl?: string; children?: React.ReactNode }) {
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-4">
@@ -327,6 +340,7 @@ function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, child
                 : <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]">Configurar</Badge>}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+            {docsUrl && <a href={docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Documentação</a>}
           </div>
         </div>
         {!configured && (
@@ -341,18 +355,20 @@ function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, child
   );
 }
 
-function OddsAdminSetting() {
+type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY";
+
+function AdminSecretSetting({ settingKey, placeholder, onSaved }: { settingKey: SecretKey; placeholder: string; onSaved?: () => void }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const utils = trpc.useUtils();
-  const { data: meta } = trpc.admin.getSetting.useQuery({ key: "ODDS_API_KEY" }, { enabled: isAdmin });
+  const { data: meta } = trpc.admin.getSetting.useQuery({ key: settingKey }, { enabled: isAdmin });
   const [token, setToken] = useState("");
   const saveMut = trpc.admin.setSetting.useMutation({
-    onSuccess: () => { toast.success("Token salvo."); setToken(""); utils.admin.getSetting.invalidate(); utils.odds.configured.invalidate(); utils.odds.sports.invalidate(); },
+    onSuccess: () => { toast.success("Token salvo."); setToken(""); utils.admin.getSetting.invalidate(); onSaved?.(); },
     onError: () => toast.error("Falha ao salvar o token."),
   });
   const clearMut = trpc.admin.clearSetting.useMutation({
-    onSuccess: () => { toast.success("Token removido."); utils.admin.getSetting.invalidate(); utils.odds.configured.invalidate(); },
+    onSuccess: () => { toast.success("Token removido."); utils.admin.getSetting.invalidate(); onSaved?.(); },
   });
 
   if (!isAdmin) return null;
@@ -365,17 +381,17 @@ function OddsAdminSetting() {
           autoComplete="off"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder={dbConfigured ? "Token já salvo — digite outro para substituir" : "Cole seu token da The Odds API"}
+          placeholder={dbConfigured ? "Token já salvo — digite outro para substituir" : placeholder}
           className="bg-secondary border-border text-xs"
         />
-        <Button size="sm" onClick={() => token.trim() && saveMut.mutate({ key: "ODDS_API_KEY", value: token })}
+        <Button size="sm" onClick={() => token.trim() && saveMut.mutate({ key: settingKey, value: token })}
           disabled={!token.trim() || saveMut.isPending}
           className="bg-primary hover:bg-primary/90 text-primary-foreground">
           {saveMut.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
         </Button>
         {dbConfigured && (
           <Button size="sm" variant="outline" className="text-loss border-loss/30 hover:bg-loss/10"
-            onClick={() => clearMut.mutate({ key: "ODDS_API_KEY" })} disabled={clearMut.isPending}>
+            onClick={() => clearMut.mutate({ key: settingKey })} disabled={clearMut.isPending}>
             <XIcon className="w-3 h-3" />
           </Button>
         )}
