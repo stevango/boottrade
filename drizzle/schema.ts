@@ -306,6 +306,13 @@ export const watchlist = mysqlTable("watchlist", {
   userSymbol: uniqueIndex("watchlist_userId_symbol_unique").on(t.userId, t.symbol),
 }));
 
+// App-wide settings (admin-managed). Sensitive values are stored encrypted.
+export const appSettings = mysqlTable("app_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Robot = typeof robots.$inferSelect;

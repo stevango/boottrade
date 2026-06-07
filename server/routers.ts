@@ -23,7 +23,8 @@ import {
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
   getUserByEmail, createLocalUser, createBacktest,
-  getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats
+  getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats,
+  getAppSettingMeta, setAppSetting, deleteAppSetting
 } from "./db";
 import { chatComplete, isLLMConfigured } from "./llm";
 import { rateLimit } from "./rateLimit";
@@ -461,9 +462,9 @@ export const appRouter = router({
   }),
 
   odds: router({
-    configured: protectedProcedure.query(() => ({ configured: isOddsConfigured() })),
+    configured: protectedProcedure.query(async () => ({ configured: await isOddsConfigured() })),
     sports: protectedProcedure.query(async () => {
-      if (!isOddsConfigured()) return { configured: false as const, sports: [] };
+      if (!(await isOddsConfigured())) return { configured: false as const, sports: [] };
       const sports = await fetchSports();
       return { configured: true as const, sports };
     }),
@@ -476,8 +477,8 @@ export const appRouter = router({
         edgeThresholdPct: z.number().min(0).max(50).optional(),
       }))
       .mutation(async ({ input }) => {
-        if (!isOddsConfigured()) {
-          return { configured: false as const, valueBets: [], message: "Feed de odds não configurado. Defina ODDS_API_KEY no servidor (token gratuito em the-odds-api.com)." };
+        if (!(await isOddsConfigured())) {
+          return { configured: false as const, valueBets: [], message: "Feed de odds não configurado. Defina ODDS_API_KEY no servidor ou cole o token em Integrações (admin)." };
         }
         const { valueBets } = await fetchOpportunities(input);
         return { configured: true as const, valueBets, message: null };
@@ -565,12 +566,30 @@ export const appRouter = router({
       const users = await getAllUsers();
       return users.map(toPublicUser);
     }),
+    // App-wide settings management. Keys are whitelisted so the UI can't
+    // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
+    getSetting: adminProcedure
+      .input(z.object({ key: z.enum(["ODDS_API_KEY"]) }))
+      .query(async ({ input }) => {
+        return getAppSettingMeta(input.key);
+      }),
+    setSetting: adminProcedure
+      .input(z.object({ key: z.enum(["ODDS_API_KEY"]), value: z.string().min(1).max(512) }))
+      .mutation(async ({ input }) => {
+        return setAppSetting(input.key, input.value.trim());
+      }),
+    clearSetting: adminProcedure
+      .input(z.object({ key: z.enum(["ODDS_API_KEY"]) }))
+      .mutation(async ({ input }) => {
+        return deleteAppSetting(input.key);
+      }),
     diagnostics: adminProcedure.query(async () => {
-      const stats = await getSystemStats();
+      const [stats, oddsCfg] = await Promise.all([getSystemStats(), isOddsConfigured()]);
       return {
         dbConnected: stats !== null,
         llmConfigured: isLLMConfigured(),
         marketDataConfigured: isMarketDataConfigured(),
+        oddsConfigured: oddsCfg,
         counts: stats ?? { users: 0, robots: 0, trades: 0, brokers: 0, backtests: 0 },
         security: {
           brokerCredentialsEncrypted: true,

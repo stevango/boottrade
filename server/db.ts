@@ -4,7 +4,7 @@ import {
   InsertUser, users, robots, trades, backtests, riskSettings,
   marketplaceListings, socialPosts, copyTrades, userRobots,
   robotBrain, brainDecisions, portfolioAssets, financialGoals,
-  aiConversations, dailyPnl, brokerConnections, watchlist
+  aiConversations, dailyPnl, brokerConnections, watchlist, appSettings
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';
@@ -85,6 +85,50 @@ export async function getUserByOpenId(openId: string) {
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
+}
+
+// App-wide encrypted settings (admin-managed). Value is stored encrypted with
+// the same AES-256-GCM helper used for broker credentials; never echoed back
+// to the UI — only "configured" status + updatedAt are exposed.
+export async function getAppSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  try {
+    const result = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
+    if (result.length === 0) return null;
+    return decryptSecret(result[0].value);
+  } catch (error) {
+    console.warn("[AppSettings] read failed:", error);
+    return null;
+  }
+}
+
+export async function getAppSettingMeta(key: string): Promise<{ configured: boolean; updatedAt: Date | null }> {
+  const db = await getDb();
+  if (!db) return { configured: false, updatedAt: null };
+  const result = await db.select({ updatedAt: appSettings.updatedAt }).from(appSettings).where(eq(appSettings.key, key)).limit(1);
+  if (result.length === 0) return { configured: false, updatedAt: null };
+  return { configured: true, updatedAt: result[0].updatedAt };
+}
+
+export async function setAppSetting(key: string, value: string): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) return { success: false };
+  const encrypted = encryptSecret(value);
+  const existing = await db.select({ key: appSettings.key }).from(appSettings).where(eq(appSettings.key, key)).limit(1);
+  if (existing.length === 0) {
+    await db.insert(appSettings).values({ key, value: encrypted });
+  } else {
+    await db.update(appSettings).set({ value: encrypted }).where(eq(appSettings.key, key));
+  }
+  return { success: true };
+}
+
+export async function deleteAppSetting(key: string): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.delete(appSettings).where(eq(appSettings.key, key));
+  return { success: true };
 }
 
 // Watchlist

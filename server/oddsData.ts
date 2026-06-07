@@ -2,14 +2,23 @@
 // Free tier: ~500 req/mês. Used to surface value bets across bookmakers for
 // the Oracle AI brain. Pure helpers; no execution endpoints exist on this API.
 
+import { getAppSetting } from "./db";
+
 const BASE = "https://api.the-odds-api.com/v4";
+const SETTING_KEY = "ODDS_API_KEY";
 
 export class OddsNotConfiguredError extends Error {
   constructor() { super("Odds API not configured"); this.name = "OddsNotConfiguredError"; }
 }
 
-export function isOddsConfigured(): boolean {
-  return Boolean(process.env.ODDS_API_KEY);
+// Effective API key: prefers the server env var, otherwise the admin-stored
+// app setting. Lets the operator pick either path without code changes.
+export async function getOddsApiKey(): Promise<string | null> {
+  return process.env.ODDS_API_KEY || (await getAppSetting(SETTING_KEY));
+}
+
+export async function isOddsConfigured(): Promise<boolean> {
+  return (await getOddsApiKey()) !== null;
 }
 
 type ApiSport = { key: string; group: string; title: string; description: string; active: boolean; has_outrights: boolean };
@@ -33,7 +42,7 @@ export type ValueBet = {
 };
 
 async function call<T>(path: string, params: Record<string, string>): Promise<T> {
-  const apiKey = process.env.ODDS_API_KEY;
+  const apiKey = await getOddsApiKey();
   if (!apiKey) throw new OddsNotConfiguredError();
   const qs = new URLSearchParams({ ...params, apiKey }).toString();
   const resp = await fetch(`${BASE}${path}?${qs}`, { signal: AbortSignal.timeout(20_000) });

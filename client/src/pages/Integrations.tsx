@@ -8,11 +8,12 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Plug2, Link2, CheckCircle, AlertCircle, RefreshCw, Trash2, Shield, Loader2,
-  Brain, Radar, Bitcoin, Trophy, Landmark, Clock,
+  Brain, Radar, Bitcoin, Trophy, Landmark, Clock, Save, X as XIcon,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 const ROBOT_MAP = {
   openai: ["Consultor IA", "Consultor de Risco", "Consultor de Alocação", "Auditor Técnico"],
@@ -209,7 +210,9 @@ export default function Integrations() {
             configured={!!oddsCfg?.configured}
             desc="Odds em tempo real de 200+ casas (Bet365, Betano, Sportingbet…). Alimenta o scanner de value bets em /opportunities e os sinais esportivos do Oracle AI. Plano free ~500 req/mês."
             usedBy={["Oracle AI", "Scanner de Esportes (Oportunidades)"]}
-          />
+          >
+            <OddsAdminSetting />
+          </ServerIntegration>
         </Section>
 
         {/* Cripto */}
@@ -310,7 +313,7 @@ function Section({ title, icon: Icon, children }: { title: string; icon: typeof 
   );
 }
 
-function ServerIntegration({ name, logo, envVar, configured, desc, usedBy }: { name: string; logo: string; envVar: string; configured: boolean; desc: string; usedBy: string[] }) {
+function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, children }: { name: string; logo: string; envVar: string; configured: boolean; desc: string; usedBy: string[]; children?: React.ReactNode }) {
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-4">
@@ -328,12 +331,59 @@ function ServerIntegration({ name, logo, envVar, configured, desc, usedBy }: { n
         </div>
         {!configured && (
           <p className="text-[11px] text-muted-foreground mt-2">
-            Defina <code className="text-primary">{envVar}</code> nas variáveis do servidor (Railway → Variables).
+            Defina <code className="text-primary">{envVar}</code> nas variáveis do servidor (Railway → Variables){children ? " — ou cole o token abaixo:" : "."}
           </p>
         )}
+        {children}
         <RobotChips items={usedBy} />
       </CardContent>
     </Card>
+  );
+}
+
+function OddsAdminSetting() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const utils = trpc.useUtils();
+  const { data: meta } = trpc.admin.getSetting.useQuery({ key: "ODDS_API_KEY" }, { enabled: isAdmin });
+  const [token, setToken] = useState("");
+  const saveMut = trpc.admin.setSetting.useMutation({
+    onSuccess: () => { toast.success("Token salvo."); setToken(""); utils.admin.getSetting.invalidate(); utils.odds.configured.invalidate(); utils.odds.sports.invalidate(); },
+    onError: () => toast.error("Falha ao salvar o token."),
+  });
+  const clearMut = trpc.admin.clearSetting.useMutation({
+    onSuccess: () => { toast.success("Token removido."); utils.admin.getSetting.invalidate(); utils.odds.configured.invalidate(); },
+  });
+
+  if (!isAdmin) return null;
+  const dbConfigured = !!meta?.configured;
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex gap-2">
+        <Input
+          type="password"
+          autoComplete="off"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={dbConfigured ? "Token já salvo — digite outro para substituir" : "Cole seu token da The Odds API"}
+          className="bg-secondary border-border text-xs"
+        />
+        <Button size="sm" onClick={() => token.trim() && saveMut.mutate({ key: "ODDS_API_KEY", value: token })}
+          disabled={!token.trim() || saveMut.isPending}
+          className="bg-primary hover:bg-primary/90 text-primary-foreground">
+          {saveMut.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+        </Button>
+        {dbConfigured && (
+          <Button size="sm" variant="outline" className="text-loss border-loss/30 hover:bg-loss/10"
+            onClick={() => clearMut.mutate({ key: "ODDS_API_KEY" })} disabled={clearMut.isPending}>
+            <XIcon className="w-3 h-3" />
+          </Button>
+        )}
+      </div>
+      {dbConfigured && meta?.updatedAt && (
+        <p className="text-[10px] text-muted-foreground">Token guardado e criptografado (AES-256-GCM) · atualizado em {new Date(meta.updatedAt).toLocaleString("pt-BR")}</p>
+      )}
+    </div>
   );
 }
 
