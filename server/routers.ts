@@ -26,12 +26,12 @@ import {
   getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats,
   getAppSettingMeta, setAppSetting, deleteAppSetting
 } from "./db";
-import { chatComplete, isLLMConfigured } from "./llm";
+import { chatComplete, isLLMConfigured, testLLMConnection } from "./llm";
 import { rateLimit } from "./rateLimit";
 import { runMonteCarloBacktest } from "./backtest";
 import { computeAllocation } from "./allocation";
 import { analyzeSeries } from "./signals";
-import { isMarketDataConfigured, fetchDailyHistory } from "./marketData";
+import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 
@@ -177,7 +177,7 @@ export const appRouter = router({
         range: z.enum(["1y", "2y", "5y", "10y"]).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        if (!isMarketDataConfigured()) {
+        if (!(await isMarketDataConfigured())) {
           return { configured: false as const, signal: null, decision: null, symbol: input.symbol, message: "Feed de mercado não configurado. Defina BRAPI_TOKEN para o robô analisar ativos." };
         }
         const history = await fetchDailyHistory(input.symbol, input.range ?? "5y");
@@ -364,7 +364,8 @@ export const appRouter = router({
   }),
 
   ai: router({
-    configured: protectedProcedure.query(() => ({ configured: isLLMConfigured() })),
+    configured: protectedProcedure.query(async () => ({ configured: await isLLMConfigured() })),
+    test: protectedProcedure.mutation(async () => testLLMConnection()),
     chat: protectedProcedure
       .input(z.object({
         message: z.string().min(1).max(2000),
@@ -404,7 +405,7 @@ export const appRouter = router({
           { role: "user" as const, content: input.message },
         ];
 
-        if (!isLLMConfigured()) {
+        if (!(await isLLMConfigured())) {
           return {
             response: "O Consultor IA ainda não está configurado neste ambiente. Defina OPENAI_API_KEY (ou outro provedor compatível via LLM_BASE_URL/LLM_MODEL) no servidor para ativar as respostas.",
             conversationId: input.conversationId,
@@ -437,7 +438,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         rateLimit(`ai.advise:${ctx.user.id}`, 20, 60_000);
-        if (!isLLMConfigured()) {
+        if (!(await isLLMConfigured())) {
           return { configured: false as const, response: "O Consultor IA ainda não está configurado. Defina OPENAI_API_KEY no servidor para ativar as orientações." };
         }
         const base = "Responda em português brasileiro, de forma direta, específica e acionável (use listas e prioridades). Foque em segurança e em passos concretos. Deixe claro que são orientações, não garantias.";
@@ -529,11 +530,12 @@ export const appRouter = router({
   }),
 
   market: router({
-    configured: protectedProcedure.query(() => ({ configured: isMarketDataConfigured() })),
+    configured: protectedProcedure.query(async () => ({ configured: await isMarketDataConfigured() })),
+    test: protectedProcedure.mutation(async () => testMarketDataConnection()),
     scan: protectedProcedure
       .input(z.object({ symbols: z.array(z.string().trim().min(1).max(20)).min(1).max(12), range: z.enum(["1y", "2y", "5y", "10y"]).optional() }))
       .mutation(async ({ input }) => {
-        if (!isMarketDataConfigured()) {
+        if (!(await isMarketDataConfigured())) {
           return { configured: false as const, results: [], message: "Feed de mercado não configurado. Defina BRAPI_TOKEN no servidor." };
         }
         const results: { symbol: string; name: string; trend: string; trendStrength: number; oneYear: number | null; lastPrice: number; score: number; error?: string }[] = [];
@@ -555,7 +557,7 @@ export const appRouter = router({
     analyze: protectedProcedure
       .input(z.object({ symbol: z.string().trim().min(1).max(20), range: z.enum(["1y", "2y", "5y", "10y"]).optional() }))
       .mutation(async ({ input }) => {
-        if (!isMarketDataConfigured()) {
+        if (!(await isMarketDataConfigured())) {
           return { configured: false as const, symbol: input.symbol, name: input.symbol, signal: null, message: "Feed de mercado não configurado. Defina BRAPI_TOKEN no servidor para ativar a análise de tendências." };
         }
         const history = await fetchDailyHistory(input.symbol, input.range ?? "5y");
@@ -602,17 +604,17 @@ export const appRouter = router({
     // App-wide settings management. Keys are whitelisted so the UI can't
     // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
     getSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
       .query(async ({ input }) => {
         return getAppSettingMeta(input.key);
       }),
     setSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]), value: z.string().min(1).max(512) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]), value: z.string().min(1).max(512) }))
       .mutation(async ({ input }) => {
         return setAppSetting(input.key, input.value.trim());
       }),
     clearSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
       .mutation(async ({ input }) => {
         return deleteAppSetting(input.key);
       }),
@@ -620,8 +622,8 @@ export const appRouter = router({
       const [stats, oddsCfg, oddsIoCfg] = await Promise.all([getSystemStats(), isOddsConfigured(), isOddsIoConfigured()]);
       return {
         dbConnected: stats !== null,
-        llmConfigured: isLLMConfigured(),
-        marketDataConfigured: isMarketDataConfigured(),
+        llmConfigured: await isLLMConfigured(),
+        marketDataConfigured: await isMarketDataConfigured(),
         oddsConfigured: oddsCfg,
         oddsIoConfigured: oddsIoCfg,
         counts: stats ?? { users: 0, robots: 0, trades: 0, brokers: 0, backtests: 0 },

@@ -3,12 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Plug2, Link2, CheckCircle, AlertCircle, RefreshCw, Trash2, Shield, Loader2,
-  Brain, Radar, Bitcoin, Trophy, Landmark, Clock, Save, X as XIcon,
+  Brain, Radar, Bitcoin, Trophy, Landmark, Clock, Save, X as XIcon, Zap, Info,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
@@ -21,7 +21,10 @@ const ROBOT_MAP = {
   binance: ["Kraken AI", "Nexus AI"],
   betfair: ["Oracle AI"],
   open_finance: ["Athena AI", "Titan AI", "Quantum AI", "Pulse AI", "Odin AI"],
+  odds: ["Oracle AI", "Scanner de Esportes (Oportunidades)"],
 };
+
+type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY" | "OPENAI_API_KEY" | "BRAPI_TOKEN";
 
 type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key";
 type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
@@ -38,15 +41,14 @@ const CONNECTABLES: Connectable[] = [
       { name: "appKey" }, { name: "username" }, { name: "password" },
       { name: "cert", optional: true, multiline: true }, { name: "key", optional: true, multiline: true },
     ],
-    note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo. Se ainda não tem cert, deixe em branco e tentaremos login interativo primeiro.",
+    note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo.",
     docsUrl: "https://docs.developer.betfair.com/", docsLabel: "Doc Betfair Exchange API" },
 ];
 
-// Corretoras tradicionais — não self-service para retail. Mostradas com a postura honesta.
 type Traditional = { id: string; name: string; logo: string; desc: string; docsUrl?: string; usedBy: string[]; status: string };
 const TRADITIONAL: Traditional[] = [
   { id: "clear", name: "Clear Corretora", logo: "🟢",
-    desc: "API existe (portal devs.clear.com.br) mas é institucional/parceiro — não self-service. Para automação retail, a Clear usa MetaTrader 5 e Profit (Nelogica). A leitura de posições virá via Open Finance no futuro.",
+    desc: "API existe (devs.clear.com.br) mas é institucional/parceiro — não self-service. Para automação retail, a Clear usa MetaTrader 5 e Profit (Nelogica). A leitura de posições virá via Open Finance no futuro.",
     docsUrl: "https://devs.clear.com.br/index.html",
     usedBy: ROBOT_MAP.open_finance, status: "Requer parceria" },
   { id: "br_others", name: "XP, Rico, BTG, Inter, Modal, NuInvest…", logo: "🏦",
@@ -72,11 +74,9 @@ function RobotChips({ items }: { items: string[] }) {
 }
 
 export default function Integrations() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { data: connections } = trpc.brokers.list.useQuery();
-  const { data: aiCfg } = trpc.ai.configured.useQuery();
-  const { data: marketCfg } = trpc.market.configured.useQuery();
-  const { data: oddsCfg } = trpc.odds.configured.useQuery();
-  const { data: oddsIoCfg } = trpc.oddsIo.configured.useQuery();
   const utils = trpc.useUtils();
 
   const addMutation = trpc.brokers.connect.useMutation({
@@ -96,16 +96,13 @@ export default function Integrations() {
   const [form, setForm] = useState<Record<string, string>>({});
   const reset = () => { setForm({}); setSelected(null); };
 
-  const openConnect = (item: Connectable) => {
-    setSelected(item); setForm({}); setDialogOpen(true);
-  };
+  const openConnect = (item: Connectable) => { setSelected(item); setForm({}); setDialogOpen(true); };
 
   const submit = () => {
     if (!selected) return;
     for (const f of selected.fields) {
       if (!f.optional && !form[f.name]?.trim()) return toast.error(`Informe ${labelFor(f.name)}.`);
     }
-    // Drop empty optional fields so the server doesn't receive blanks.
     const payload: Record<string, string> = {};
     for (const f of selected.fields) {
       const v = form[f.name]?.trim();
@@ -124,7 +121,16 @@ export default function Integrations() {
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
             <Plug2 className="w-7 h-7 text-primary" /> Integrações
           </h1>
-          <p className="text-muted-foreground">Veja o que está conectado e quais robôs cada integração ativa</p>
+          <p className="text-muted-foreground">Veja o que está conectado, configure tokens e teste cada provedor</p>
+          {!isAdmin && (
+            <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-warning/5 border border-warning/20">
+              <Info className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Você não é admin.</strong> Para salvar tokens dos provedores de servidor (OpenAI, brapi, Odds), promova seu usuário com:
+                {" "}<code className="text-primary">UPDATE users SET role='admin' WHERE email='{user?.email ?? "seu@email.com"}';</code>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Conectadas */}
@@ -190,43 +196,50 @@ export default function Integrations() {
 
         {/* Provedores de IA */}
         <Section title="Provedores de IA" icon={Brain}>
-          <ServerIntegration
+          <ServerKeyCard
+            settingKey="OPENAI_API_KEY"
             name="OpenAI (Consultor IA)" logo="🧠" envVar="OPENAI_API_KEY"
-            configured={!!aiCfg?.configured}
             desc="Ativa todos os consultores de IA do app (Risco, Alocação, Auditor, Operação)."
             usedBy={ROBOT_MAP.openai}
+            docsUrl="https://platform.openai.com/docs/api-reference"
+            configuredQuery={trpc.ai.configured.useQuery()}
+            testMutation={trpc.ai.test.useMutation}
+            isAdmin={isAdmin}
           />
         </Section>
 
         {/* Feeds de mercado */}
         <Section title="Feeds de Mercado" icon={Radar}>
-          <ServerIntegration
+          <ServerKeyCard
+            settingKey="BRAPI_TOKEN"
             name="brapi.dev (B3)" logo="📊" envVar="BRAPI_TOKEN"
-            configured={!!marketCfg?.configured}
             desc="Cotações e histórico de ativos da B3 — alimenta análise de tendência, scanner e os sinais do cérebro dos robôs."
             usedBy={ROBOT_MAP.brapi}
+            docsUrl="https://brapi.dev/dashboard"
+            configuredQuery={trpc.market.configured.useQuery()}
+            testMutation={trpc.market.test.useMutation}
+            isAdmin={isAdmin}
           />
-          <ServerIntegration
+          <ServerKeyCard
+            settingKey="ODDS_API_KEY"
             name="The Odds API (esportes)" logo="🎲" envVar="ODDS_API_KEY"
-            configured={!!oddsCfg?.configured}
-            desc="Odds em tempo real de 200+ casas. Plano free ~500 req/mês. Alimenta o scanner de value bets em /opportunities e os sinais esportivos do Oracle AI."
-            usedBy={["Oracle AI", "Scanner de Esportes (Oportunidades)"]}
+            desc="Odds em tempo real de 200+ casas. Plano free ~500 req/mês."
+            usedBy={ROBOT_MAP.odds}
             docsUrl="https://the-odds-api.com/liveapi/guides/v4/"
-          >
-            <AdminSecretSetting settingKey="ODDS_API_KEY" placeholder="Cole seu token da The Odds API"
-              onSaved={() => { utils.odds.configured.invalidate(); utils.odds.sports.invalidate(); }} />
-          </ServerIntegration>
-          <ServerIntegration
+            configuredQuery={trpc.odds.configured.useQuery()}
+            testQuery={trpc.odds.sports.useQuery}
+            isAdmin={isAdmin}
+          />
+          <ServerKeyCard
+            settingKey="ODDS_IO_API_KEY"
             name="Odds-API.io (esportes)" logo="🎰" envVar="ODDS_IO_API_KEY"
-            configured={!!oddsIoCfg?.configured}
-            desc="Alternativa ao The Odds API: 265+ casas, 34 esportes, free tier de 100 req/hora (sem cartão). WebSocket disponível em planos pagos."
-            usedBy={["Oracle AI (alternativa de feed)", "Scanner de Esportes (Oportunidades)"]}
+            desc="Alternativa: 265+ casas, 34 esportes, free de 100 req/hora (sem cartão)."
+            usedBy={ROBOT_MAP.odds}
             docsUrl="https://docs.odds-api.io"
-          >
-            <AdminSecretSetting settingKey="ODDS_IO_API_KEY" placeholder="Cole seu token do Odds-API.io"
-              onSaved={() => { utils.oddsIo.configured.invalidate(); utils.oddsIo.sports.invalidate(); }} />
-            {oddsIoCfg?.configured && <OddsIoTester />}
-          </ServerIntegration>
+            configuredQuery={trpc.oddsIo.configured.useQuery()}
+            testQuery={trpc.oddsIo.sports.useQuery}
+            isAdmin={isAdmin}
+          />
         </Section>
 
         {/* Cripto */}
@@ -250,14 +263,13 @@ export default function Integrations() {
           {TRADITIONAL.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
-        {/* Info */}
         <Card className="bg-card border-primary/20">
           <CardContent className="p-5 flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Shield className="w-5 h-5 text-primary" /></div>
             <div>
               <p className="text-sm font-medium text-foreground mb-1">Segurança e escopo</p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Credenciais de integração são criptografadas com AES-256-GCM no servidor e <strong>nunca retornam ao navegador</strong>.
+                Credenciais (chaves, senhas, certificados) são criptografadas com AES-256-GCM no servidor e <strong>nunca retornam ao navegador</strong>.
                 Os robôs do app são <strong>cérebros de aprendizado</strong> — eles registram sinais e aprendem com os resultados,
                 mas <strong>nenhuma operação é executada automaticamente</strong>. A execução é manual na plataforma; sincronizamos saldo/exposição read-only.
               </p>
@@ -275,36 +287,21 @@ export default function Integrations() {
               <div className="flex items-center gap-2 mb-1"><Shield className="w-4 h-4 text-primary" /><p className="text-xs font-medium text-primary">Conexão Segura (read-only)</p></div>
               <p className="text-xs text-muted-foreground">
                 {selected?.id === "betfair"
-                  ? "Usa os endpoints regulamentados .bet.br. Apenas saldo e exposição são lidos — nenhuma aposta é enviada pelo app."
+                  ? "Usa os endpoints regulamentados .bet.br. Apenas saldo e exposição são lidos."
                   : "Crie uma API Key na exchange com permissão apenas de leitura."}
                 {" "}Credenciais são criptografadas (AES-256-GCM) e nunca retornam ao navegador.
               </p>
             </div>
-            {selected?.note && (
-              <p className="text-[11px] text-muted-foreground leading-relaxed bg-secondary/40 rounded p-2">{selected.note}</p>
-            )}
+            {selected?.note && (<p className="text-[11px] text-muted-foreground leading-relaxed bg-secondary/40 rounded p-2">{selected.note}</p>)}
             {selected?.fields.map((f) => (
               <div key={f.name} className="space-y-2">
                 <Label className="text-sm text-muted-foreground">
                   {labelFor(f.name)}{f.optional && <span className="text-muted-foreground/70"> (opcional)</span>}
                 </Label>
                 {f.multiline ? (
-                  <Textarea
-                    value={form[f.name] ?? ""}
-                    onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
-                    placeholder={placeholderFor(f.name)}
-                    rows={5}
-                    className="bg-secondary border-border font-mono text-[11px]"
-                  />
+                  <Textarea value={form[f.name] ?? ""} onChange={(e) => setForm({ ...form, [f.name]: e.target.value })} placeholder={placeholderFor(f.name)} rows={5} className="bg-secondary border-border font-mono text-[11px]" />
                 ) : (
-                  <Input
-                    type={f.name === "username" ? "text" : "password"}
-                    autoComplete="off"
-                    value={form[f.name] ?? ""}
-                    onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
-                    placeholder={placeholderFor(f.name)}
-                    className="bg-secondary border-border"
-                  />
+                  <Input type={f.name === "username" ? "text" : "password"} autoComplete="off" value={form[f.name] ?? ""} onChange={(e) => setForm({ ...form, [f.name]: e.target.value })} placeholder={placeholderFor(f.name)} className="bg-secondary border-border" />
                 )}
               </div>
             ))}
@@ -327,96 +324,131 @@ function Section({ title, icon: Icon, children }: { title: string; icon: typeof 
   );
 }
 
-function ServerIntegration({ name, logo, envVar, configured, desc, usedBy, docsUrl, children }: { name: string; logo: string; envVar: string; configured: boolean; desc: string; usedBy: string[]; docsUrl?: string; children?: React.ReactNode }) {
+// Unified card for server-side keys (admin sets via UI; envvar override still works).
+function ServerKeyCard(props: {
+  settingKey: SecretKey;
+  name: string; logo: string; envVar: string; desc: string; usedBy: string[];
+  docsUrl?: string;
+  configuredQuery: { data?: { configured?: boolean } };
+  testMutation?: any; // trpc useMutation factory (ai.test, market.test)
+  testQuery?: any;    // trpc useQuery factory used for testing (odds.sports, oddsIo.sports)
+  isAdmin: boolean;
+}) {
+  const utils = trpc.useUtils();
+  const { data: meta } = trpc.admin.getSetting.useQuery({ key: props.settingKey }, { enabled: props.isAdmin });
+  const [token, setToken] = useState("");
+  const [verify, setVerify] = useState<{ ok: boolean; message: string; at: Date } | null>(null);
+
+  const saveMut = trpc.admin.setSetting.useMutation({
+    onSuccess: () => { toast.success("Token salvo."); setToken(""); utils.admin.getSetting.invalidate(); props.configuredQuery && (utils as any)[providerNs(props.settingKey)]?.configured?.invalidate?.(); },
+    onError: () => toast.error("Falha ao salvar."),
+  });
+  const clearMut = trpc.admin.clearSetting.useMutation({
+    onSuccess: () => { toast.success("Token removido."); setVerify(null); utils.admin.getSetting.invalidate(); (utils as any)[providerNs(props.settingKey)]?.configured?.invalidate?.(); },
+  });
+
+  // Either a dedicated test mutation OR re-runs the existing list query
+  const testMut = props.testMutation?.({
+    onSuccess: (r: any) => { setVerify({ ok: r.ok, message: r.message, at: new Date() }); (utils as any)[providerNs(props.settingKey)]?.configured?.invalidate?.(); },
+    onError: (e: any) => setVerify({ ok: false, message: e?.message || "Falha", at: new Date() }),
+  });
+  const testQueryHook = props.testQuery ? props.testQuery(undefined, { enabled: false }) : null;
+  const runTest = async () => {
+    if (testMut) { testMut.mutate(undefined as any); return; }
+    if (testQueryHook) {
+      const r = await testQueryHook.refetch();
+      const d: any = r.data;
+      if (!d) setVerify({ ok: false, message: "Sem resposta", at: new Date() });
+      else if (d.configured === false) setVerify({ ok: false, message: "Token não configurado", at: new Date() });
+      else if (d.error) setVerify({ ok: false, message: d.error, at: new Date() });
+      else if (Array.isArray(d.sports)) setVerify({ ok: d.sports.length > 0, message: d.sports.length > 0 ? `Conectado: ${d.sports.length} esportes` : "Resposta vazia", at: new Date() });
+      else setVerify({ ok: true, message: "Conectado", at: new Date() });
+    }
+  };
+
+  const envConfigured = !!props.configuredQuery.data?.configured;
+  const dbConfigured = !!meta?.configured;
+  const isConnected = envConfigured || dbConfigured;
+
   return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-4">
-        <div className="flex items-start gap-3 mb-2">
-          <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-xl">{logo}</div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium text-foreground">{name}</p>
-              {configured
-                ? <Badge variant="outline" className="bg-profit/10 text-profit border-profit/20 text-[10px]">Ativo</Badge>
-                : <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]">Configurar</Badge>}
+    <Card className="bg-card border-border sm:col-span-2 lg:col-span-3">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-xl">{props.logo}</div>
+            <div>
+              <CardTitle className="text-base text-foreground flex items-center gap-2">
+                {props.name}
+                {isConnected
+                  ? <Badge variant="outline" className="bg-profit/10 text-profit border-profit/20 text-[10px]">Conectado</Badge>
+                  : <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]">Inativa</Badge>}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">{props.desc}</p>
+              {props.docsUrl && <a href={props.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Documentação da API</a>}
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-            {docsUrl && <a href={docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Documentação</a>}
           </div>
         </div>
-        {!configured && (
-          <p className="text-[11px] text-muted-foreground mt-2">
-            Defina <code className="text-primary">{envVar}</code> nas variáveis do servidor (Railway → Variables){children ? " — ou cole o token abaixo:" : "."}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">API Key ({props.envVar})</Label>
+          <div className="flex gap-2 flex-wrap">
+            <Input
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={dbConfigured ? "Salvo no banco — digite outro para substituir" : envConfigured ? "Definido por variável de ambiente — digite um para sobrescrever" : "Cole sua chave aqui"}
+              className="bg-secondary border-border flex-1 min-w-[200px]"
+              disabled={!props.isAdmin}
+            />
+            <Button
+              size="sm"
+              onClick={() => token.trim() && saveMut.mutate({ key: props.settingKey, value: token })}
+              disabled={!props.isAdmin || !token.trim() || saveMut.isPending}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {saveMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />} Salvar
+            </Button>
+            {dbConfigured && (
+              <Button size="sm" variant="outline" className="text-loss border-loss/30 hover:bg-loss/10"
+                onClick={() => clearMut.mutate({ key: props.settingKey })} disabled={!props.isAdmin || clearMut.isPending}>
+                <XIcon className="w-3 h-3 mr-1" /> Desconectar
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button size="sm" variant="outline" onClick={runTest} disabled={!isConnected || (testMut?.isPending ?? false) || (testQueryHook?.isFetching ?? false)}>
+            {(testMut?.isPending || testQueryHook?.isFetching) ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Testar conexão
+          </Button>
+          {verify && (
+            <span className={`text-xs ${verify.ok ? "text-profit" : "text-loss"}`}>
+              {verify.ok ? "✓" : "⚠"} {verify.message} · {verify.at.toLocaleTimeString("pt-BR")}
+            </span>
+          )}
+          {dbConfigured && meta?.updatedAt && !verify && (
+            <span className="text-[11px] text-muted-foreground">Salvo em {new Date(meta.updatedAt).toLocaleString("pt-BR")} (AES-256-GCM)</span>
+          )}
+        </div>
+        {!isConnected && (
+          <p className="text-[11px] text-muted-foreground">
+            Alternativa via variável de servidor: defina <code className="text-primary">{props.envVar}</code> no Railway → Variables.
           </p>
         )}
-        {children}
-        <RobotChips items={usedBy} />
+        <RobotChips items={props.usedBy} />
       </CardContent>
     </Card>
   );
 }
 
-type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY";
-
-function OddsIoTester() {
-  const sportsQ = trpc.oddsIo.sports.useQuery();
-  const sports = (sportsQ.data as any)?.sports as { key: string; title: string }[] | undefined;
-  const error = (sportsQ.data as any)?.error;
-  if (sportsQ.isLoading) return <p className="text-[11px] text-muted-foreground mt-2"><Loader2 className="w-3 h-3 inline animate-spin mr-1" /> Buscando /sports...</p>;
-  if (error) return <p className="text-[11px] text-loss mt-2 bg-loss/5 border border-loss/20 rounded p-2">⚠ {error}</p>;
-  if (!sports) return null;
-  if (sports.length === 0) return <p className="text-[11px] text-warning mt-2">/sports retornou vazio — token pode estar inválido ou sem permissão.</p>;
-  return (
-    <div className="text-[11px] text-muted-foreground mt-2 bg-profit/5 border border-profit/20 rounded p-2">
-      ✓ {sports.length} esportes disponíveis: <span className="text-foreground">{sports.slice(0, 5).map(s => s.title).join(", ")}{sports.length > 5 ? "…" : ""}</span>
-    </div>
-  );
-}
-
-function AdminSecretSetting({ settingKey, placeholder, onSaved }: { settingKey: SecretKey; placeholder: string; onSaved?: () => void }) {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const utils = trpc.useUtils();
-  const { data: meta } = trpc.admin.getSetting.useQuery({ key: settingKey }, { enabled: isAdmin });
-  const [token, setToken] = useState("");
-  const saveMut = trpc.admin.setSetting.useMutation({
-    onSuccess: () => { toast.success("Token salvo."); setToken(""); utils.admin.getSetting.invalidate(); onSaved?.(); },
-    onError: () => toast.error("Falha ao salvar o token."),
-  });
-  const clearMut = trpc.admin.clearSetting.useMutation({
-    onSuccess: () => { toast.success("Token removido."); utils.admin.getSetting.invalidate(); onSaved?.(); },
-  });
-
-  if (!isAdmin) return null;
-  const dbConfigured = !!meta?.configured;
-  return (
-    <div className="mt-3 space-y-2">
-      <div className="flex gap-2">
-        <Input
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder={dbConfigured ? "Token já salvo — digite outro para substituir" : placeholder}
-          className="bg-secondary border-border text-xs"
-        />
-        <Button size="sm" onClick={() => token.trim() && saveMut.mutate({ key: settingKey, value: token })}
-          disabled={!token.trim() || saveMut.isPending}
-          className="bg-primary hover:bg-primary/90 text-primary-foreground">
-          {saveMut.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-        </Button>
-        {dbConfigured && (
-          <Button size="sm" variant="outline" className="text-loss border-loss/30 hover:bg-loss/10"
-            onClick={() => clearMut.mutate({ key: settingKey })} disabled={clearMut.isPending}>
-            <XIcon className="w-3 h-3" />
-          </Button>
-        )}
-      </div>
-      {dbConfigured && meta?.updatedAt && (
-        <p className="text-[10px] text-muted-foreground">Token guardado e criptografado (AES-256-GCM) · atualizado em {new Date(meta.updatedAt).toLocaleString("pt-BR")}</p>
-      )}
-    </div>
-  );
+// Maps a setting key to the corresponding tRPC namespace used to invalidate
+// `configured` queries after save/clear/test.
+function providerNs(key: SecretKey): "ai" | "market" | "odds" | "oddsIo" {
+  if (key === "OPENAI_API_KEY") return "ai";
+  if (key === "BRAPI_TOKEN") return "market";
+  if (key === "ODDS_API_KEY") return "odds";
+  return "oddsIo";
 }
 
 function ConnectableCard({ item, onConnect }: { item: Connectable; onConnect: () => void }) {
@@ -428,9 +460,7 @@ function ConnectableCard({ item, onConnect }: { item: Connectable; onConnect: ()
           <div className="flex-1">
             <p className="text-sm font-medium text-foreground">{item.name}</p>
             <p className="text-xs text-muted-foreground">{item.desc}</p>
-            {item.docsUrl && (
-              <a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">{item.docsLabel ?? "Documentação"}</a>
-            )}
+            {item.docsUrl && (<a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">{item.docsLabel ?? "Documentação"}</a>)}
           </div>
         </div>
         <RobotChips items={item.usedBy} />
@@ -454,9 +484,7 @@ function TraditionalCard({ item }: { item: Traditional }) {
               <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]"><Clock className="w-3 h-3 mr-1" /> {item.status}</Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{item.desc}</p>
-            {item.docsUrl && (
-              <a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Portal de developers da corretora</a>
-            )}
+            {item.docsUrl && (<a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Portal de developers da corretora</a>)}
           </div>
         </div>
         <RobotChips items={item.usedBy} />
