@@ -56,6 +56,16 @@ const TRADITIONAL: Traditional[] = [
     usedBy: ROBOT_MAP.open_finance, status: "Em breve (Open Finance)" },
 ];
 
+const AUTOMATION: Traditional[] = [
+  { id: "smarttbot", name: "SmarttBot", logo: "🚀",
+    desc: "Plataforma brasileira de automação de estratégias. Não expõe API pública self-service para consumo externo — a SmarttBot É a plataforma de execução (estratégias rodam no painel dela, conectadas a uma corretora). Integração realista: enviar sinais do nosso cérebro para um webhook configurado na SmarttBot (em breve).",
+    docsUrl: "https://smarttbot.com/wp-content/uploads/2022/05/Informacoes-API-SmarttBot-1.pdf",
+    usedBy: ["Oracle AI (sinal → webhook)", "Demais robôs (futuro)"], status: "Sem API self-service" },
+  { id: "mt5", name: "MetaTrader 5 / Profit (Nelogica)", logo: "📈",
+    desc: "Terminais de execução automatizada usados por corretoras BR (Clear, XP, etc.). Não há REST API pública — automação roda dentro do próprio terminal (Expert Advisors / RoboTrader).",
+    usedBy: ["Execução manual dos sinais"], status: "Sem API pública" },
+];
+
 type SyncData = { balances?: { asset: string; free: string; locked: string }[]; funds?: { availableToBetBalance: number; exposure: number }; note?: string };
 const parseSync = (v: unknown): SyncData | null => {
   if (!v) return null;
@@ -253,6 +263,11 @@ export default function Integrations() {
         {/* Tradicionais */}
         <Section title="Corretoras Tradicionais" icon={Landmark}>
           {TRADITIONAL.map((t) => <TraditionalCard key={t.id} item={t} />)}
+        </Section>
+
+        {/* Plataformas de automação (sem API self-service) */}
+        <Section title="Plataformas de Automação" icon={Zap}>
+          {AUTOMATION.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
         <Card className="bg-card border-primary/20">
