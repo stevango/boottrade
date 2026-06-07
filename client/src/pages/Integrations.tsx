@@ -25,16 +25,32 @@ const ROBOT_MAP = {
 type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key";
 type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
 type ConnectableId = "binance" | "betfair";
-type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: Field[]; note?: string };
+type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: Field[]; note?: string; docsUrl?: string; docsLabel?: string };
 
 const CONNECTABLES: Connectable[] = [
-  { id: "binance", name: "Binance", logo: "🟡", desc: "Exchange de cripto — saldo read-only via API.", usedBy: ROBOT_MAP.binance, fields: [{ name: "apiKey" }, { name: "apiSecret" }] },
+  { id: "binance", name: "Binance", logo: "🟡",
+    desc: "Exchange de cripto — saldo read-only via API. Crie a API Key em Account → API Management e marque apenas Enable Reading.",
+    usedBy: ROBOT_MAP.binance, fields: [{ name: "apiKey" }, { name: "apiSecret" }],
+    docsUrl: "https://developers.binance.com/docs/binance-spot-api-docs/CHANGELOG", docsLabel: "Doc oficial Binance Spot API" },
   { id: "betfair", name: "Betfair Brasil (Exchange)", logo: "🎯", desc: "Exchange de apostas — usa o endpoint regulamentado .bet.br (saldo read-only).", usedBy: ROBOT_MAP.betfair,
     fields: [
       { name: "appKey" }, { name: "username" }, { name: "password" },
       { name: "cert", optional: true, multiline: true }, { name: "key", optional: true, multiline: true },
     ],
-    note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo. Se ainda não tem cert, deixe em branco e tentaremos login interativo primeiro." },
+    note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo. Se ainda não tem cert, deixe em branco e tentaremos login interativo primeiro.",
+    docsUrl: "https://docs.developer.betfair.com/", docsLabel: "Doc Betfair Exchange API" },
+];
+
+// Corretoras tradicionais — não self-service para retail. Mostradas com a postura honesta.
+type Traditional = { id: string; name: string; logo: string; desc: string; docsUrl?: string; usedBy: string[]; status: string };
+const TRADITIONAL: Traditional[] = [
+  { id: "clear", name: "Clear Corretora", logo: "🟢",
+    desc: "API existe (portal devs.clear.com.br) mas é institucional/parceiro — não self-service. Para automação retail, a Clear usa MetaTrader 5 e Profit (Nelogica). A leitura de posições virá via Open Finance no futuro.",
+    docsUrl: "https://devs.clear.com.br/index.html",
+    usedBy: ROBOT_MAP.open_finance, status: "Requer parceria" },
+  { id: "br_others", name: "XP, Rico, BTG, Inter, Modal, NuInvest…", logo: "🏦",
+    desc: "Não oferecem API pública self-service para o trader. Importação de posições virá via Open Finance (somente leitura).",
+    usedBy: ROBOT_MAP.open_finance, status: "Em breve (Open Finance)" },
 ];
 
 type SyncData = { balances?: { asset: string; free: string; locked: string }[]; funds?: { availableToBetBalance: number; exposure: number }; note?: string };
@@ -58,6 +74,7 @@ export default function Integrations() {
   const { data: connections } = trpc.brokers.list.useQuery();
   const { data: aiCfg } = trpc.ai.configured.useQuery();
   const { data: marketCfg } = trpc.market.configured.useQuery();
+  const { data: oddsCfg } = trpc.odds.configured.useQuery();
   const utils = trpc.useUtils();
 
   const addMutation = trpc.brokers.connect.useMutation({
@@ -187,6 +204,12 @@ export default function Integrations() {
             desc="Cotações e histórico de ativos da B3 — alimenta análise de tendência, scanner e os sinais do cérebro dos robôs."
             usedBy={ROBOT_MAP.brapi}
           />
+          <ServerIntegration
+            name="The Odds API (esportes)" logo="🎲" envVar="ODDS_API_KEY"
+            configured={!!oddsCfg?.configured}
+            desc="Odds em tempo real de 200+ casas (Bet365, Betano, Sportingbet…). Alimenta o scanner de value bets em /opportunities e os sinais esportivos do Oracle AI. Plano free ~500 req/mês."
+            usedBy={["Oracle AI", "Scanner de Esportes (Oportunidades)"]}
+          />
         </Section>
 
         {/* Cripto */}
@@ -207,18 +230,7 @@ export default function Integrations() {
 
         {/* Tradicionais */}
         <Section title="Corretoras Tradicionais" icon={Landmark}>
-          <Card className="bg-card border-border opacity-80">
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-xl">🏦</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2"><p className="text-sm font-medium text-foreground">Clear, XP, Rico, BTG, Inter, Modal, NuInvest…</p><Badge variant="outline" className="text-[10px]"><Clock className="w-3 h-3 mr-1" /> Em breve</Badge></div>
-                  <p className="text-xs text-muted-foreground">Importação de posições via Open Finance (somente leitura). Corretoras de bolsa não oferecem API pública self-service para o trader; a leitura virá pelo agregador.</p>
-                  <RobotChips items={ROBOT_MAP.open_finance} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          {TRADITIONAL.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
         {/* Info */}
@@ -334,12 +346,38 @@ function ConnectableCard({ item, onConnect }: { item: Connectable; onConnect: ()
           <div className="flex-1">
             <p className="text-sm font-medium text-foreground">{item.name}</p>
             <p className="text-xs text-muted-foreground">{item.desc}</p>
+            {item.docsUrl && (
+              <a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">{item.docsLabel ?? "Documentação"}</a>
+            )}
           </div>
         </div>
         <RobotChips items={item.usedBy} />
         <Button size="sm" variant="outline" className="w-full text-xs mt-3" onClick={onConnect}>
           <Link2 className="w-3 h-3 mr-1" /> Conectar
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TraditionalCard({ item }: { item: Traditional }) {
+  return (
+    <Card className="bg-card border-border opacity-90">
+      <CardContent className="p-4">
+        <div className="flex items-start gap-3 mb-2">
+          <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-xl">{item.logo}</div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-medium text-foreground">{item.name}</p>
+              <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]"><Clock className="w-3 h-3 mr-1" /> {item.status}</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{item.desc}</p>
+            {item.docsUrl && (
+              <a href={item.docsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Portal de developers da corretora</a>
+            )}
+          </div>
+        </div>
+        <RobotChips items={item.usedBy} />
       </CardContent>
     </Card>
   );

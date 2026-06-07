@@ -31,6 +31,7 @@ import { runMonteCarloBacktest } from "./backtest";
 import { computeAllocation } from "./allocation";
 import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory } from "./marketData";
+import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -456,6 +457,30 @@ export const appRouter = router({
           console.error("[AI] advise failed:", error);
           return { configured: true as const, response: "Ocorreu um erro ao consultar a IA. Tente novamente." };
         }
+      }),
+  }),
+
+  odds: router({
+    configured: protectedProcedure.query(() => ({ configured: isOddsConfigured() })),
+    sports: protectedProcedure.query(async () => {
+      if (!isOddsConfigured()) return { configured: false as const, sports: [] };
+      const sports = await fetchSports();
+      return { configured: true as const, sports };
+    }),
+    opportunities: protectedProcedure
+      .input(z.object({
+        sport: z.string().trim().min(1).max(80),
+        regions: z.string().trim().max(40).optional(),
+        markets: z.string().trim().max(80).optional(),
+        bookmakers: z.string().trim().max(200).optional(),
+        edgeThresholdPct: z.number().min(0).max(50).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        if (!isOddsConfigured()) {
+          return { configured: false as const, valueBets: [], message: "Feed de odds não configurado. Defina ODDS_API_KEY no servidor (token gratuito em the-odds-api.com)." };
+        }
+        const { valueBets } = await fetchOpportunities(input);
+        return { configured: true as const, valueBets, message: null };
       }),
   }),
 
