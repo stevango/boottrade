@@ -39,10 +39,27 @@ async function call<T>(path: string, params: Record<string, string> = {}): Promi
   return resp.json() as Promise<T>;
 }
 
+// Different envelope shapes seen across odds providers: raw array, or wrapped
+// in { data | sports | results | items }. Try each before giving up.
+function unwrapList<T>(raw: unknown): T[] {
+  if (Array.isArray(raw)) return raw as T[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const key of ["data", "sports", "results", "items", "list"]) {
+      if (Array.isArray(o[key])) return o[key] as T[];
+    }
+  }
+  return [];
+}
+
 export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
-  const raw = await call<OddsIoSport[]>("/sports");
-  // Normaliza para o mesmo shape que usamos no UI (key/title/group/active).
-  return (raw ?? []).map((s) => ({
+  const raw = await call<unknown>("/sports");
+  const list = unwrapList<OddsIoSport>(raw);
+  if (list.length === 0 && raw && typeof raw === "object") {
+    const peek = JSON.stringify(raw).slice(0, 180);
+    throw new Error(`Resposta inesperada de /sports (não é array nem envelope conhecido): ${peek}`);
+  }
+  return list.map((s) => ({
     key: s.key ?? s.id ?? "",
     title: s.title ?? s.name ?? s.key ?? s.id ?? "",
     group: s.group ?? "Outros",
@@ -93,8 +110,8 @@ export async function fetchOpportunities(opts: {
 }): Promise<{ valueBets: ValueBet[]; eventCount: number }> {
   const params: Record<string, string> = { sport: opts.sport };
   if (opts.bookmakers) params.bookmakers = opts.bookmakers;
-  const raw = await call<unknown[]>("/odds", params);
-  const events = normalize(raw);
+  const raw = await call<unknown>("/odds", params);
+  const events = normalize(unwrapList<unknown>(raw));
   const valueBets = computeValueBets(events, opts.edgeThresholdPct ?? 3);
   return { valueBets, eventCount: events.length };
 }
