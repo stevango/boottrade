@@ -28,6 +28,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+const BOOTED_AT = new Date().toISOString();
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -47,6 +49,18 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Public version probe so we can verify which build is actually running on
+  // the deployed environment (Railway exposes RAILWAY_GIT_COMMIT_SHA).
+  app.get("/api/version", (_req, res) => {
+    res.json({
+      commit: (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || "dev").slice(0, 12),
+      branch: process.env.RAILWAY_GIT_BRANCH || "unknown",
+      env: process.env.NODE_ENV || "development",
+      bootedAt: BOOTED_AT,
+    });
+  });
+
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   // tRPC API
