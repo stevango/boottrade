@@ -24,7 +24,7 @@ export async function isOddsIoConfigured(): Promise<boolean> {
   return (await getOddsIoApiKey()) !== null;
 }
 
-type OddsIoSport = { key?: string; id?: string; name?: string; title?: string; group?: string; active?: boolean };
+type OddsIoSport = { key?: string; id?: string; slug?: string; name?: string; title?: string; group?: string; category?: string; active?: boolean };
 export type OddsIoSportNormalized = { key: string; title: string; group: string; active: boolean };
 
 async function call<T>(path: string, params: Record<string, string> = {}): Promise<T> {
@@ -68,9 +68,9 @@ export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
   const { status, text, json } = await callRaw("/sports");
   const list = unwrapList<OddsIoSport>(json);
   const mapped = list.map((s) => ({
-    key: s.key ?? s.id ?? "",
-    title: s.title ?? s.name ?? s.key ?? s.id ?? "",
-    group: s.group ?? "Outros",
+    key: s.slug ?? s.key ?? s.id ?? "",
+    title: s.title ?? s.name ?? s.slug ?? s.key ?? s.id ?? "",
+    group: s.group ?? s.category ?? "Outros",
     active: s.active !== false,
   })).filter((s) => s.key);
   if (mapped.length === 0) {
