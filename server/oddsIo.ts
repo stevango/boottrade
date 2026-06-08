@@ -126,16 +126,20 @@ export async function fetchBookmakers(): Promise<string> {
   if (bookmakersCache && Date.now() - bookmakersCache.fetchedAt < BOOKMAKERS_TTL_MS) {
     return bookmakersCache.csv;
   }
-  const { status, json } = await callRaw("/bookmakers");
+  // /bookmakers/selected returns the slugs the caller's plan is actually
+  // allowed to query. Using the full /bookmakers list triggers a 403
+  // "Access denied. You're allowed max N bookmakers" because the upstream
+  // validates the request against the account's selection.
+  const { status, json } = await callRaw("/bookmakers/selected");
   const list = unwrapList<Record<string, unknown>>(json);
   const slugs = list
     .map((b) => String(b.slug ?? b.key ?? b.id ?? b.name ?? "").trim())
     .filter((s) => s.length > 0);
   if (slugs.length === 0) {
-    throw new Error(`/bookmakers HTTP ${status} → sem slugs (shape: ${JSON.stringify(json).slice(0, 220)})`);
+    throw new Error(`/bookmakers/selected HTTP ${status} → sem slugs selecionados (configure no painel da Odds-API.io). Shape: ${JSON.stringify(json).slice(0, 220)}`);
   }
-  // /odds caps the bookmakers param at 30 entries. Use the first 30 — the
-  // upstream filters to whichever ones the caller's plan covers anyway.
+  // /odds caps the bookmakers param at 30 entries (well above any plan's
+  // selected count, so this is just a defensive guard).
   const csv = slugs.slice(0, 30).join(",");
   bookmakersCache = { csv, fetchedAt: Date.now() };
   return csv;
