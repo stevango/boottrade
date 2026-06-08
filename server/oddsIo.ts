@@ -28,15 +28,27 @@ type OddsIoSport = { key?: string; id?: string; name?: string; title?: string; g
 export type OddsIoSportNormalized = { key: string; title: string; group: string; active: boolean };
 
 async function call<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  const { json } = await callRaw(path, params);
+  return json as T;
+}
+
+// Returns the HTTP status, the raw text body and the parsed JSON (if any) so
+// callers can build precise diagnostic messages when the body shape isn't what
+// they expected. The /sports endpoint at odds-api.io has been observed to
+// return {} or [] for some accounts/plans — we want the UI to surface that
+// instead of silently saying "Resposta vazia".
+async function callRaw(path: string, params: Record<string, string> = {}): Promise<{ status: number; text: string; json: unknown }> {
   const apiKey = await getOddsIoApiKey();
   if (!apiKey) throw new OddsIoNotConfiguredError();
   const qs = new URLSearchParams({ ...params, apiKey }).toString();
   const resp = await fetch(`${BASE}${path}?${qs}`, { signal: AbortSignal.timeout(20_000) });
+  const text = await resp.text().catch(() => "");
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
     throw new Error(`Odds-API.io ${resp.status}: ${text.slice(0, 200)}`);
   }
-  return resp.json() as Promise<T>;
+  let json: unknown = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* leave json null, callers will use text */ }
+  return { status: resp.status, text, json };
 }
 
 // Different envelope shapes seen across odds providers: raw array, or wrapped
@@ -53,11 +65,14 @@ function unwrapList<T>(raw: unknown): T[] {
 }
 
 export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
-  const raw = await call<unknown>("/sports");
-  const list = unwrapList<OddsIoSport>(raw);
-  if (list.length === 0 && raw && typeof raw === "object") {
-    const peek = JSON.stringify(raw).slice(0, 180);
-    throw new Error(`Resposta inesperada de /sports (não é array nem envelope conhecido): ${peek}`);
+  const { status, text, json } = await callRaw("/sports");
+  const list = unwrapList<OddsIoSport>(json);
+  if (list.length === 0) {
+    const peek = json == null
+      ? (text ? `body não-JSON: ${text.slice(0, 160)}` : "body vazio")
+      : Array.isArray(json) ? "[] (array vazio — chave válida mas plano sem esportes liberados?)"
+      : `shape inesperado: ${JSON.stringify(json).slice(0, 160)}`;
+    throw new Error(`/sports HTTP ${status} → ${peek}`);
   }
   return list.map((s) => ({
     key: s.key ?? s.id ?? "",
