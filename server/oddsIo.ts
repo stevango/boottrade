@@ -107,7 +107,7 @@ function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEve
   const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? fallback?.away ?? fallback?.away_team ?? fallback?.awayTeam ?? "");
   const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? fallback?.commence_time ?? fallback?.commenceTime ?? fallback?.start_time ?? fallback?.startTime ?? "");
   if (!home || !away) return null;
-  const bms = toArray(ev.bookmakers ?? ev.books ?? ev.odds);
+  const bms = toArray(ev.bookmakers ?? ev.books ?? ev.odds ?? ev.markets ?? ev.prices ?? ev.lines);
   const bookmakers = bms.map((bm) => {
     const name = String(bm.title ?? bm.name ?? bm.key ?? bm.bookmaker ?? "");
     const mks = toArray(bm.markets ?? bm.lines ?? bm.bets, "key");
@@ -211,7 +211,7 @@ export async function fetchOpportunities(opts: {
         normalized.push(n);
       } else {
         eventsWithoutBookmakers++;
-        if (!firstOddsPeek) firstOddsPeek = `eventId=${eventId} → ${JSON.stringify(json).slice(0, 220)}`;
+        if (!firstOddsPeek) firstOddsPeek = `eventId=${eventId} → keys=[${json && typeof json === "object" ? Object.keys(json).join(",") : "n/a"}] body=${JSON.stringify(json).slice(0, 1400)}`;
       }
     } catch (err) {
       if (!firstOddsError) firstOddsError = `eventId=${eventId} → ${String(err).slice(0, 200)}`;
