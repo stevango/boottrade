@@ -163,8 +163,23 @@ export async function fetchBookmakers(): Promise<string> {
 
 export async function fetchEvents(sport: string): Promise<RawEventLite[]> {
   const { status, text, json } = await callRaw("/events", { sport });
-  const list = unwrapList<RawEventLite>(json);
-  const events = list.filter((e) => e && (e.id || e.event_id || e.eventId));
+  const list = unwrapList<RawEventLite & { date?: string; status?: string }>(json);
+  const all = list.filter((e) => e && (e.id || e.event_id || e.eventId));
+  // odds-api.io /events returns past + upcoming. Past matches have
+  // bookmakers:{} so they'd waste calls. Keep only events whose date hasn't
+  // passed (or has no date), and sort ascending so we hit the nearest first.
+  const now = Date.now();
+  const upcoming = all.filter((e) => {
+    const d = e.date ?? e.commence_time ?? e.commenceTime ?? e.start_time ?? e.startTime;
+    if (!d) return true;
+    const t = Date.parse(d);
+    return !Number.isFinite(t) || t >= now - 30 * 60 * 1000;
+  }).sort((a, b) => {
+    const ta = Date.parse(a.date ?? a.commence_time ?? a.commenceTime ?? a.start_time ?? a.startTime ?? "") || 0;
+    const tb = Date.parse(b.date ?? b.commence_time ?? b.commenceTime ?? b.start_time ?? b.startTime ?? "") || 0;
+    return ta - tb;
+  });
+  const events = upcoming.length > 0 ? upcoming : all;
   if (events.length === 0) {
     const peek = json == null
       ? (text ? `body não-JSON: ${text.slice(0, 200)}` : "body vazio")
@@ -188,12 +203,12 @@ export async function fetchOpportunities(opts: {
   // 1 (/events) + N (/odds). 5 events = 6 calls/click ≈ 16 searches/hour.
   const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 5, 20));
   const events = await fetchEvents(opts.sport);
-  const slice = events.slice(0, maxEvents);
+  // Try up to maxScan events but stop early after maxEvents have real odds —
+  // this skips past-game stubs (bookmakers:{}) without burning the full
+  // quota on every search.
+  const maxScan = Math.min(events.length, maxEvents * 3);
+  const slice = events.slice(0, maxScan);
 
-  // /odds requires real bookmaker slugs (the upstream rejects guessed names
-  // like "bet365" with a 400). When the caller doesn't pass an explicit list,
-  // fetch the canonical /v3/bookmakers list once and reuse it; the upstream
-  // still filters to whatever the caller's plan actually covers.
   const bookmakers = opts.bookmakers || await fetchBookmakers();
 
   const normalized: NormalizedEvent[] = [];
@@ -201,6 +216,7 @@ export async function fetchOpportunities(opts: {
   let firstOddsPeek: string | null = null;
   let eventsWithoutBookmakers = 0;
   for (const e of slice) {
+    if (normalized.length >= maxEvents) break;
     const eventId = String(e.id ?? e.event_id ?? e.eventId ?? "");
     if (!eventId) continue;
     const params: Record<string, string> = { eventId, bookmakers };
