@@ -527,6 +527,7 @@ export const appRouter = router({
         league: z.string().trim().max(120).optional(),
         bookmakers: z.string().trim().max(200).optional(),
         edgeThresholdPct: z.number().min(0).max(50).optional(),
+        includeAllMarkets: z.boolean().optional(),
       }))
       .mutation(async ({ input }) => {
         if (!(await isOddsIoConfigured())) {

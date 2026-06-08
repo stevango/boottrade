@@ -87,6 +87,31 @@ type RawEventLite = { id?: string; event_id?: string; eventId?: string; home?: s
 // Keys inside an odds object that are metadata, not outcome prices.
 const ODDS_META_KEYS = new Set(["hdp", "handicap", "line", "label", "name", "updatedAt", "point", "spread", "total"]);
 
+// Mainline markets — names where bookies use the same outcome definitions and
+// the value-bet bucketing across books is meaningful. Player props ("PLAYER
+// SHOTS ON TARGET", "PLAYER GOALS"), in-game timing markets ("FIRST 10
+// MINUTES"), and similar exotic markets get filtered out by default: bookies
+// frame those differently (different lines, different specific players), so
+// bucketing them by name produces fake edges in the 50-70% range.
+const MAINLINE_MARKETS = new Set([
+  "ML",                      // moneyline / 1X2
+  "DRAW NO BET",
+  "DOUBLE CHANCE",
+  "TOTALS",                  // full-game over/under
+  "GOALS OVER/UNDER",
+  "BOTH TEAMS TO SCORE",
+  "SPREAD",                  // asian handicap
+  "ASIAN HANDICAP",
+]);
+function isMainlineMarket(name: string): boolean {
+  const n = name.trim().toUpperCase();
+  if (MAINLINE_MARKETS.has(n)) return true;
+  // Catch common aliases / spelling variations.
+  if (n === "1X2" || n === "MATCH WINNER" || n === "MONEYLINE") return true;
+  if (n === "BTTS") return true;
+  return false;
+}
+
 // odds-api.io structures /odds responses like:
 //   bookmakers: {
 //     Bet365: [
@@ -100,13 +125,17 @@ const ODDS_META_KEYS = new Set(["hdp", "handicap", "line", "label", "name", "upd
 // `hdp`/`label` are metadata. For Double Chance markets the `label` field
 // names the specific outcome ("Mexico or Draw") and the price is under
 // `under`/`over`.
-function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEvent | null {
+function normalizeOneEvent(raw: unknown, fallback?: RawEventLite, opts?: { includeAllMarkets?: boolean }): NormalizedEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const ev = raw as Record<string, unknown>;
   const id = String(ev.id ?? ev.event_id ?? ev.eventId ?? fallback?.id ?? fallback?.event_id ?? fallback?.eventId ?? "");
   const home = String(ev.home_team ?? ev.home ?? ev.homeTeam ?? fallback?.home ?? fallback?.home_team ?? fallback?.homeTeam ?? "");
   const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? fallback?.away ?? fallback?.away_team ?? fallback?.awayTeam ?? "");
-  const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? fallback?.commence_time ?? fallback?.commenceTime ?? fallback?.start_time ?? fallback?.startTime ?? "");
+  const fb = fallback as (RawEventLite & { date?: string }) | undefined;
+  const commenceTime = String(
+    (ev as Record<string, unknown>).date ?? ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ??
+    fb?.date ?? fb?.commence_time ?? fb?.commenceTime ?? fb?.start_time ?? fb?.startTime ?? "",
+  );
   if (!home || !away) return null;
 
   const bmsRaw = ev.bookmakers ?? ev.books ?? ev.odds;
@@ -125,6 +154,9 @@ function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEve
       const m = (mk && typeof mk === "object" ? mk : {}) as Record<string, unknown>;
       const marketKey = String(m.name ?? m.key ?? m.market ?? m.type ?? "").trim();
       if (!marketKey) return { key: "", outcomes: [] as NormalizedEvent["bookmakers"][number]["markets"][number]["outcomes"] };
+      if (!opts?.includeAllMarkets && !isMainlineMarket(marketKey)) {
+        return { key: "", outcomes: [] };
+      }
       const oddsList = Array.isArray(m.odds) ? m.odds : Array.isArray(m.outcomes) ? m.outcomes : Array.isArray(m.selections) ? m.selections : [];
       const outcomes: { name: string; price: number; point?: number }[] = [];
       for (const entry of oddsList) {
@@ -252,6 +284,7 @@ export async function fetchOpportunities(opts: {
   bookmakers?: string;
   edgeThresholdPct?: number;
   maxEvents?: number;
+  includeAllMarkets?: boolean;
 }): Promise<{ valueBets: ValueBet[]; eventCount: number; diag?: string }> {
   // odds-api.io requires fetching odds per-event: 1 call to /events, then N
   // calls to /odds?eventId=…. Cap N so we don't burn the user's hourly quota.
@@ -278,7 +311,7 @@ export async function fetchOpportunities(opts: {
     const params: Record<string, string> = { eventId, bookmakers };
     try {
       const { json } = await callRaw("/odds", params);
-      const n = normalizeOneEvent(json, e);
+      const n = normalizeOneEvent(json, e, { includeAllMarkets: opts.includeAllMarkets });
       if (n && n.bookmakers.length > 0) {
         normalized.push(n);
       } else {

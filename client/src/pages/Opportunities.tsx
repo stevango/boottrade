@@ -196,6 +196,7 @@ function SportsPanel() {
   const [sport, setSport] = useState<string>("");
   const [league, setLeague] = useState<string>("");
   const [edgeMin, setEdgeMin] = useState<string>("3");
+  const [includeAllMarkets, setIncludeAllMarkets] = useState(false);
   const [bets, setBets] = useState<ValueBet[] | null>(null);
 
   // Leagues only matter for Odds-API.io (The Odds API embeds the league in
@@ -242,7 +243,7 @@ function SportsPanel() {
     if (provider === "the-odds-api") {
       searchTheOdds.mutate({ sport, regions: "eu,uk", markets: "h2h", edgeThresholdPct });
     } else {
-      searchOddsIo.mutate({ sport, league: league || undefined, edgeThresholdPct });
+      searchOddsIo.mutate({ sport, league: league || undefined, edgeThresholdPct, includeAllMarkets });
     }
   };
 
@@ -329,10 +330,21 @@ function SportsPanel() {
               {isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Buscando...</> : <><Search className="w-4 h-4 mr-2" /> Buscar</>}
             </Button>
           </div>
+          {provider === "odds-api-io" && (
+            <label className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeAllMarkets}
+                onChange={(e) => setIncludeAllMarkets(e.target.checked)}
+                className="accent-primary"
+              />
+              Incluir mercados exóticos (player props, primeiros minutos, etc) — atenção: gera edges falsos quando casas usam definições diferentes.
+            </label>
+          )}
           <p className="text-[11px] text-muted-foreground">
             Compara a melhor odd vs. a média entre casas. Edge = quanto a melhor odd está acima da média — quanto maior, melhor o value.
             {provider === "the-odds-api" && " Regiões EU/UK incluem Bet365, Betano, Sportingbet."}
-            {provider === "odds-api-io" && " Dica: filtre por uma liga grande (Brasileirão, Premier League) — as 2 casas do plano free não cobrem ligas regionais obscuras."}
+            {provider === "odds-api-io" && " Por padrão filtra para mercados mainline (ML/1X2, Double Chance, Totals, BTTS, Spread) — os únicos onde Bet365 e Betano definem as outcomes da mesma forma."}
           </p>
         </CardContent>
       </Card>
@@ -350,7 +362,9 @@ function SportsPanel() {
                       <p className="text-sm font-medium text-foreground">{b.event}</p>
                       <p className="text-xs text-muted-foreground">
                         {b.market.toUpperCase()} · <span className="text-foreground">{b.outcome}</span>{b.point != null && ` (${b.point})`}
-                        {" · "}{new Date(b.commence).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        {b.commence && Number.isFinite(Date.parse(b.commence)) && (
+                          <> · {new Date(b.commence).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</>
+                        )}
                       </p>
                     </div>
                   </div>
