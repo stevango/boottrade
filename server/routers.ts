@@ -17,7 +17,7 @@ import {
   getRobotBrain, getBrainDecisions, getPortfolioAssets, getFinancialGoals,
   getDailyPnl, upsertRobotBrain, addBrainDecision, addPortfolioAsset,
   updatePortfolioAsset, deletePortfolioAsset, addFinancialGoal,
-  updateFinancialGoal, getAiConversation, saveAiConversation,
+  updateFinancialGoal, deleteFinancialGoal, getAiConversation, saveAiConversation,
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
@@ -364,12 +364,22 @@ export const appRouter = router({
     update: protectedProcedure
       .input(z.object({
         id: z.number(),
+        title: z.string().min(1).max(200).optional(),
+        targetAmount: z.number().positive().optional(),
         currentAmount: z.number().optional(),
+        deadline: z.string().nullable().optional(),
+        priority: z.enum(["low", "medium", "high"]).optional(),
+        category: z.enum(["patrimonio", "renda_passiva", "aposentadoria", "emergencia", "projeto", "outro"]).optional(),
         status: z.enum(["active", "completed", "paused"]).optional(),
         monthlyContribution: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         return updateFinancialGoal(ctx.user.id, input.id, input);
+      }),
+    remove: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        return deleteFinancialGoal(ctx.user.id, input.id);
       }),
   }),
 

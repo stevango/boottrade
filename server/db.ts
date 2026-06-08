@@ -641,10 +641,23 @@ export async function updateFinancialGoal(userId: number, id: number, data: any)
   const db = await getDb();
   if (!db) return { success: false };
   const setData: any = {};
+  if (data.title !== undefined) setData.title = data.title;
+  if (data.targetAmount !== undefined) setData.targetAmount = data.targetAmount.toString();
   if (data.currentAmount !== undefined) setData.currentAmount = data.currentAmount.toString();
+  if (data.deadline !== undefined) setData.deadline = data.deadline ? new Date(data.deadline) : null;
+  if (data.priority !== undefined) setData.priority = data.priority;
+  if (data.category !== undefined) setData.category = data.category;
   if (data.status !== undefined) setData.status = data.status;
   if (data.monthlyContribution !== undefined) setData.monthlyContribution = data.monthlyContribution.toString();
   await db.update(financialGoals).set(setData)
+    .where(and(eq(financialGoals.id, id), eq(financialGoals.userId, userId)));
+  return { success: true };
+}
+
+export async function deleteFinancialGoal(userId: number, id: number) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.delete(financialGoals)
     .where(and(eq(financialGoals.id, id), eq(financialGoals.userId, userId)));
   return { success: true };
 }

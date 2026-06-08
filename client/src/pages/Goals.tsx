@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Target, Plus, Trophy, TrendingUp, Clock, CheckCircle, Pause } from "lucide-react";
+import { Target, Plus, Trophy, TrendingUp, Clock, CheckCircle, Pause, Pencil, Trash2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -30,11 +30,26 @@ export default function Goals() {
       setDialogOpen(false);
     },
   });
+  const utils = trpc.useUtils();
   const updateMutation = trpc.goals.update.useMutation({
-    onSuccess: () => toast.success("Meta atualizada!"),
+    onSuccess: () => {
+      toast.success("Meta atualizada!");
+      utils.goals.list.invalidate();
+      utils.goals.projections.invalidate();
+      setDialogOpen(false);
+      setEditingId(null);
+    },
+  });
+  const removeMutation = trpc.goals.remove.useMutation({
+    onSuccess: () => {
+      toast.success("Meta excluída.");
+      utils.goals.list.invalidate();
+      utils.goals.projections.invalidate();
+    },
   });
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [newGoal, setNewGoal] = useState({
     title: "",
     targetAmount: 0,
@@ -55,14 +70,19 @@ export default function Goals() {
       toast.error("Preencha título e valor alvo");
       return;
     }
-    addMutation.mutate({
+    const payload = {
       title: newGoal.title,
       targetAmount: newGoal.targetAmount,
       deadline: newGoal.deadline || undefined,
       priority: newGoal.priority as any,
       category: newGoal.category as any,
       monthlyContribution: newGoal.monthlyContribution || undefined,
-    });
+    };
+    if (editingId != null) {
+      updateMutation.mutate({ id: editingId, ...payload, deadline: payload.deadline ?? null });
+    } else {
+      addMutation.mutate(payload);
+    }
   };
 
   return (
@@ -95,7 +115,7 @@ export default function Goals() {
             >
               <Trophy className="w-4 h-4 mr-2" /> Preset: Copa 2026
             </Button>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
             <DialogTrigger asChild>
               <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <Plus className="w-4 h-4 mr-2" /> Nova Meta
@@ -103,7 +123,7 @@ export default function Goals() {
             </DialogTrigger>
             <DialogContent className="bg-card border-border">
               <DialogHeader>
-                <DialogTitle className="text-foreground">Criar Nova Meta</DialogTitle>
+                <DialogTitle className="text-foreground">{editingId != null ? "Editar Meta" : "Criar Nova Meta"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-4">
                 <div className="space-y-2">
@@ -152,8 +172,10 @@ export default function Goals() {
                   <Label className="text-sm text-muted-foreground">Prazo (opcional)</Label>
                   <Input type="date" value={newGoal.deadline} onChange={(e) => setNewGoal({ ...newGoal, deadline: e.target.value })} className="bg-secondary border-border" />
                 </div>
-                <Button onClick={handleAddGoal} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground" disabled={addMutation.isPending}>
-                  {addMutation.isPending ? "Criando..." : "Criar Meta"}
+                <Button onClick={handleAddGoal} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground" disabled={addMutation.isPending || updateMutation.isPending}>
+                  {editingId != null
+                    ? (updateMutation.isPending ? "Salvando..." : "Salvar alterações")
+                    : (addMutation.isPending ? "Criando..." : "Criar Meta")}
                 </Button>
               </div>
             </DialogContent>
@@ -202,13 +224,48 @@ export default function Goals() {
                       <p className="text-sm font-medium text-foreground">{goal.title}</p>
                       <Badge variant="outline" className={`text-xs mt-1 ${cat?.color}`}>{cat?.label}</Badge>
                     </div>
-                    <Badge variant="outline" className={`text-xs ${
-                      goal.priority === "high" ? "text-loss border-loss/30" :
-                      goal.priority === "medium" ? "text-warning border-warning/30" :
-                      "text-muted-foreground"
-                    }`}>
-                      {goal.priority === "high" ? "Alta" : goal.priority === "medium" ? "Média" : "Baixa"}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="outline" className={`text-xs ${
+                        goal.priority === "high" ? "text-loss border-loss/30" :
+                        goal.priority === "medium" ? "text-warning border-warning/30" :
+                        "text-muted-foreground"
+                      }`}>
+                        {goal.priority === "high" ? "Alta" : goal.priority === "medium" ? "Média" : "Baixa"}
+                      </Badge>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setEditingId(goal.id);
+                          setNewGoal({
+                            title: goal.title,
+                            targetAmount: parseFloat(String(goal.targetAmount || "0")),
+                            deadline: goal.deadline ? new Date(goal.deadline).toISOString().slice(0, 10) : "",
+                            priority: goal.priority || "medium",
+                            category: goal.category || "patrimonio",
+                            monthlyContribution: parseFloat(String(goal.monthlyContribution || "0")),
+                          });
+                          setDialogOpen(true);
+                        }}
+                        title="Editar meta"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-muted-foreground hover:text-loss"
+                        onClick={() => {
+                          if (confirm(`Excluir a meta "${goal.title}"? Essa ação não pode ser desfeita.`)) {
+                            removeMutation.mutate({ id: goal.id });
+                          }
+                        }}
+                        title="Excluir meta"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="mb-3">
