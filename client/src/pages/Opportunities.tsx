@@ -194,8 +194,19 @@ function SportsPanel() {
   const sportsOddsIo = trpc.oddsIo.sports.useQuery(undefined, { enabled: provider === "odds-api-io" && !!cfgIo?.configured });
 
   const [sport, setSport] = useState<string>("");
+  const [league, setLeague] = useState<string>("");
   const [edgeMin, setEdgeMin] = useState<string>("3");
   const [bets, setBets] = useState<ValueBet[] | null>(null);
+
+  // Leagues only matter for Odds-API.io (The Odds API embeds the league in
+  // the "sport" key itself, e.g. soccer_brazil_campeonato). Without a league
+  // filter on Odds-API.io the /events list mixes 5000+ obscure leagues that
+  // the user's 2-bookmaker free plan can't cover.
+  const leaguesQuery = trpc.oddsIo.leagues.useQuery(
+    { sport },
+    { enabled: provider === "odds-api-io" && !!sport && !!cfgIo?.configured },
+  );
+  const leagues: { slug: string; name: string }[] = leaguesQuery.data?.leagues ?? [];
 
   const searchTheOdds = trpc.odds.opportunities.useMutation({
     onSuccess: (r) => {
@@ -231,7 +242,7 @@ function SportsPanel() {
     if (provider === "the-odds-api") {
       searchTheOdds.mutate({ sport, regions: "eu,uk", markets: "h2h", edgeThresholdPct });
     } else {
-      searchOddsIo.mutate({ sport, edgeThresholdPct });
+      searchOddsIo.mutate({ sport, league: league || undefined, edgeThresholdPct });
     }
   };
 
@@ -263,14 +274,14 @@ function SportsPanel() {
             <Label className="text-xs text-muted-foreground">Provedor de odds</Label>
             <div className="flex gap-2">
               <button
-                onClick={() => { setProvider("the-odds-api"); setSport(""); setBets(null); }}
+                onClick={() => { setProvider("the-odds-api"); setSport(""); setLeague(""); setBets(null); }}
                 disabled={!cfg?.configured}
                 className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-all ${provider === "the-odds-api" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground"} ${!cfg?.configured ? "opacity-40 cursor-not-allowed" : ""}`}
               >
                 The Odds API {!cfg?.configured && "(não configurado)"}
               </button>
               <button
-                onClick={() => { setProvider("odds-api-io"); setSport(""); setBets(null); }}
+                onClick={() => { setProvider("odds-api-io"); setSport(""); setLeague(""); setBets(null); }}
                 disabled={!cfgIo?.configured}
                 className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-all ${provider === "odds-api-io" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground"} ${!cfgIo?.configured ? "opacity-40 cursor-not-allowed" : ""}`}
               >
@@ -279,10 +290,10 @@ function SportsPanel() {
             </div>
           </div>
 
-          <div className="grid sm:grid-cols-[1fr_140px_auto] gap-3 sm:items-end">
+          <div className={`grid gap-3 sm:items-end ${provider === "odds-api-io" ? "sm:grid-cols-[1fr_1fr_140px_auto]" : "sm:grid-cols-[1fr_140px_auto]"}`}>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Esporte</Label>
-              <Select value={sport} onValueChange={setSport}>
+              <Select value={sport} onValueChange={(v) => { setSport(v); setLeague(""); }}>
                 <SelectTrigger className="bg-secondary border-border"><SelectValue placeholder={sports.length === 0 ? "Carregando esportes..." : "Escolha um esporte..."} /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(groupedSports).map(([group, items]) => (
@@ -294,6 +305,22 @@ function SportsPanel() {
                 </SelectContent>
               </Select>
             </div>
+            {provider === "odds-api-io" && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">
+                  Liga {leaguesQuery.isFetching && <Loader2 className="w-3 h-3 inline animate-spin ml-1" />}
+                </Label>
+                <Select value={league || "__all__"} onValueChange={(v) => setLeague(v === "__all__" ? "" : v)} disabled={!sport || leagues.length === 0}>
+                  <SelectTrigger className="bg-secondary border-border">
+                    <SelectValue placeholder={!sport ? "Escolha um esporte primeiro" : leagues.length === 0 ? "Carregando ligas..." : "Todas as ligas"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todas as ligas</SelectItem>
+                    {leagues.map(l => <SelectItem key={l.slug} value={l.slug}>{l.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Edge mínimo (%)</Label>
               <Input type="number" min="0" max="50" step="0.5" value={edgeMin} onChange={(e) => setEdgeMin(e.target.value)} className="bg-secondary border-border" />
@@ -305,6 +332,7 @@ function SportsPanel() {
           <p className="text-[11px] text-muted-foreground">
             Compara a melhor odd vs. a média entre casas. Edge = quanto a melhor odd está acima da média — quanto maior, melhor o value.
             {provider === "the-odds-api" && " Regiões EU/UK incluem Bet365, Betano, Sportingbet."}
+            {provider === "odds-api-io" && " Dica: filtre por uma liga grande (Brasileirão, Premier League) — as 2 casas do plano free não cobrem ligas regionais obscuras."}
           </p>
         </CardContent>
       </Card>

@@ -33,7 +33,7 @@ import { computeAllocation } from "./allocation";
 import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
-import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
+import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -509,9 +509,22 @@ export const appRouter = router({
         return { configured: true as const, sports: [], error: String(error).slice(0, 200) };
       }
     }),
+    leagues: protectedProcedure
+      .input(z.object({ sport: z.string().trim().min(1).max(80) }))
+      .query(async ({ input }) => {
+        if (!(await isOddsIoConfigured())) return { configured: false as const, leagues: [] };
+        try {
+          const leagues = await fetchOddsIoLeagues(input.sport);
+          return { configured: true as const, leagues };
+        } catch (error) {
+          console.error("[oddsIo] leagues failed:", error);
+          return { configured: true as const, leagues: [], error: String(error).slice(0, 200) };
+        }
+      }),
     opportunities: protectedProcedure
       .input(z.object({
         sport: z.string().trim().min(1).max(80),
+        league: z.string().trim().max(120).optional(),
         bookmakers: z.string().trim().max(200).optional(),
         edgeThresholdPct: z.number().min(0).max(50).optional(),
       }))

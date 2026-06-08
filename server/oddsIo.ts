@@ -161,8 +161,38 @@ export async function fetchBookmakers(): Promise<string> {
   return csv;
 }
 
-export async function fetchEvents(sport: string): Promise<RawEventLite[]> {
-  const { status, text, json } = await callRaw("/events", { sport });
+// Cache leagues per sport so the dropdown loads instantly after the first
+// open (and burns at most 1 quota call per sport per hour).
+type CachedLeagues = { leagues: { slug: string; name: string }[]; fetchedAt: number };
+const leaguesCache = new Map<string, CachedLeagues>();
+const LEAGUES_TTL_MS = 60 * 60 * 1000;
+
+export async function fetchLeagues(sport: string): Promise<{ slug: string; name: string }[]> {
+  const cached = leaguesCache.get(sport);
+  if (cached && Date.now() - cached.fetchedAt < LEAGUES_TTL_MS) return cached.leagues;
+  const { status, json } = await callRaw("/leagues", { sport });
+  const list = unwrapList<string | Record<string, unknown>>(json);
+  const leagues = list.map((l) => {
+    if (typeof l === "string") return { slug: l.trim(), name: l.trim() };
+    if (l && typeof l === "object") {
+      const o = l as Record<string, unknown>;
+      const slug = String(o.slug ?? o.key ?? o.id ?? o.name ?? "").trim();
+      const name = String(o.name ?? o.title ?? o.label ?? slug).trim();
+      return { slug, name };
+    }
+    return { slug: "", name: "" };
+  }).filter((l) => l.slug);
+  if (leagues.length === 0) {
+    throw new Error(`/leagues HTTP ${status} (sport=${sport}) → shape: ${JSON.stringify(json).slice(0, 220)}`);
+  }
+  leaguesCache.set(sport, { leagues, fetchedAt: Date.now() });
+  return leagues;
+}
+
+export async function fetchEvents(sport: string, league?: string): Promise<RawEventLite[]> {
+  const params: Record<string, string> = { sport };
+  if (league) params.league = league;
+  const { status, text, json } = await callRaw("/events", params);
   const list = unwrapList<RawEventLite & { date?: string; status?: string }>(json);
   const all = list.filter((e) => e && (e.id || e.event_id || e.eventId));
   // odds-api.io /events returns past + upcoming. Past matches have
@@ -193,6 +223,7 @@ export async function fetchEvents(sport: string): Promise<RawEventLite[]> {
 
 export async function fetchOpportunities(opts: {
   sport: string;
+  league?: string;
   bookmakers?: string;
   edgeThresholdPct?: number;
   maxEvents?: number;
@@ -202,7 +233,7 @@ export async function fetchOpportunities(opts: {
   // Default conservatively: free plan has 100 req/h, each search burns
   // 1 (/events) + N (/odds). 5 events = 6 calls/click ≈ 16 searches/hour.
   const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 5, 20));
-  const events = await fetchEvents(opts.sport);
+  const events = await fetchEvents(opts.sport, opts.league);
   // Try up to maxScan events but stop early after maxEvents have real odds —
   // this skips past-game stubs (bookmakers:{}) without burning the full
   // quota on every search.
