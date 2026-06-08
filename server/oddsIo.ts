@@ -142,6 +142,11 @@ export async function fetchOpportunities(opts: {
   const events = await fetchEvents(opts.sport);
   const slice = events.slice(0, maxEvents);
 
+  // /odds requires bookmakers explicitly (returns 400 "Missing bookmakers"
+  // otherwise). Send a broad default list — the API filters to whatever the
+  // caller's plan actually covers (free plan = 2 bookmakers).
+  const bookmakers = opts.bookmakers || "bet365,betano,pinnacle,1xbet,williamhill,unibet,bwin,marathonbet,sbobet,betfair";
+
   const normalized: NormalizedEvent[] = [];
   let firstOddsError: string | null = null;
   let firstOddsPeek: string | null = null;
@@ -149,8 +154,7 @@ export async function fetchOpportunities(opts: {
   for (const e of slice) {
     const eventId = String(e.id ?? e.event_id ?? e.eventId ?? "");
     if (!eventId) continue;
-    const params: Record<string, string> = { eventId };
-    if (opts.bookmakers) params.bookmakers = opts.bookmakers;
+    const params: Record<string, string> = { eventId, bookmakers };
     try {
       const { json } = await callRaw("/odds", params);
       const n = normalizeOneEvent(json, e);
