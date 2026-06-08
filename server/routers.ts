@@ -35,6 +35,7 @@ import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } f
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
+import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch } from "./matchAnalysis";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -132,6 +133,24 @@ export const appRouter = router({
       .input(z.object({ robotId: z.number(), status: z.enum(["active", "paused", "stopped"]) }))
       .mutation(async ({ ctx, input }) => {
         return setUserRobotStatus(ctx.user.id, input.robotId, input.status);
+      }),
+  }),
+
+  matchAnalysis: router({
+    configured: protectedProcedure.query(async () => ({ configured: await isApiFootballConfigured() })),
+    test: protectedProcedure.mutation(async () => testApiFootballConnection()),
+    analyze: protectedProcedure
+      .input(z.object({ home: z.string().trim().min(1).max(100), away: z.string().trim().min(1).max(100) }))
+      .mutation(async ({ input }) => {
+        if (!(await isApiFootballConfigured())) {
+          return { configured: false as const, analysis: null, error: "API-Football não configurada. Cole o token em /integrations." };
+        }
+        try {
+          const analysis = await analyzeMatch(input.home, input.away);
+          return { configured: true as const, analysis, error: null };
+        } catch (error) {
+          return { configured: true as const, analysis: null, error: String(error).slice(0, 250) };
+        }
       }),
   }),
 
@@ -660,17 +679,17 @@ export const appRouter = router({
     // App-wide settings management. Keys are whitelisted so the UI can't
     // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
     getSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
       .query(async ({ input }) => {
         return getAppSettingMeta(input.key);
       }),
     setSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]), value: z.string().min(1).max(512) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]), value: z.string().min(1).max(512) }))
       .mutation(async ({ input }) => {
         return setAppSetting(input.key, input.value.trim());
       }),
     clearSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
       .mutation(async ({ input }) => {
         return deleteAppSetting(input.key);
       }),

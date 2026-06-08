@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter } from "lucide-react";
+import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter, BarChart2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -69,6 +69,8 @@ export default function Signals() {
 
   const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral" } | null>(null);
   const [profit, setProfit] = useState<string>("");
+  const [analyzing, setAnalyzing] = useState<{ home: string; away: string } | null>(null);
+  const analyzeMut = trpc.matchAnalysis.analyze.useMutation();
 
   const submitMarking = () => {
     if (!marking) return;
@@ -201,7 +203,7 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-warning" /> Pendentes ({pending.length})
             </h2>
-            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} />)}</div>
+            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(home, away) => { setAnalyzing({ home, away }); analyzeMut.mutate({ home, away }); }} />)}</div>
           </section>
         )}
 
@@ -210,10 +212,24 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-muted-foreground" /> Histórico ({past.length})
             </h2>
-            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} onMark={() => {}} />)}</div>
+            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} onMark={() => {}} onAnalyze={(home, away) => { setAnalyzing({ home, away }); analyzeMut.mutate({ home, away }); }} />)}</div>
           </section>
         )}
       </div>
+
+      <Dialog open={!!analyzing} onOpenChange={(o) => !o && setAnalyzing(null)}>
+        <DialogContent className="bg-card border-border max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-foreground text-base flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              Análise: {analyzing?.home} × {analyzing?.away}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-2">
+            <MatchAnalysisPanel mut={analyzeMut} />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!marking} onOpenChange={(o) => !o && setMarking(null)}>
         <DialogContent className="bg-card border-border max-w-sm">
@@ -251,9 +267,169 @@ export default function Signals() {
   );
 }
 
-function SignalRow({ s, onMark }: { s: Signal; onMark: (o: "profit" | "loss" | "neutral") => void }) {
+function MatchAnalysisPanel({ mut }: { mut: any }) {
+  if (mut.isPending) {
+    return <div className="flex items-center justify-center py-10 gap-2 text-muted-foreground text-sm">
+      <Loader2 className="w-4 h-4 animate-spin" /> Buscando estatísticas (H2H + forma recente + predição)...
+    </div>;
+  }
+  if (mut.isError || !mut.data) {
+    return <p className="text-sm text-loss py-6 text-center">{mut.error?.message || "Falha ao buscar análise."}</p>;
+  }
+  const r = mut.data;
+  if (r.configured === false) {
+    return (
+      <div className="p-4 rounded bg-warning/5 border border-warning/20 text-xs text-muted-foreground space-y-2">
+        <p className="font-medium text-foreground">{r.error}</p>
+        <p>Cadastre-se em <a href="https://www.api-football.com" target="_blank" rel="noreferrer" className="text-primary underline">api-football.com</a> (free 100 req/dia, sem cartão), copie a chave e cole em <a href="/integrations" className="text-primary underline">Integrações</a> → API-Football.</p>
+      </div>
+    );
+  }
+  if (r.error) {
+    return <p className="text-sm text-loss py-6 text-center">{r.error}</p>;
+  }
+  const a = r.analysis!;
+  const pred = a.prediction;
+  const gp = a.goalProbabilities;
+  const fmtPct = (n: number) => `${n.toFixed(1)}%`;
+  return (
+    <div className="space-y-4">
+      {/* Predição */}
+      <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <p className="text-sm font-medium text-foreground">Leitura preditiva</p>
+          <Badge variant="outline" className={`text-[10px] ${pred.confidence === "high" ? "text-profit border-profit/30" : pred.confidence === "medium" ? "text-warning border-warning/30" : "text-muted-foreground"}`}>
+            Confiança: {pred.confidence === "high" ? "alta" : pred.confidence === "medium" ? "média" : "baixa"}
+          </Badge>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <ProbCell label={a.team1.name} pct={pred.team1WinPct} highlight={pred.favorite === "team1"} />
+          <ProbCell label="Empate" pct={pred.drawPct} highlight={pred.favorite === "draw"} />
+          <ProbCell label={a.team2.name} pct={pred.team2WinPct} highlight={pred.favorite === "team2"} />
+        </div>
+        <p className="text-xs text-muted-foreground">Placar provável: <strong className="text-foreground">{pred.probableScore}</strong></p>
+        <ul className="text-[11px] text-muted-foreground mt-2 space-y-0.5">
+          {pred.reasoning.map((r: string, i: number) => <li key={i}>• {r}</li>)}
+        </ul>
+      </div>
+
+      {/* H2H */}
+      <div>
+        <p className="text-sm font-medium text-foreground mb-2">Histórico direto (H2H)</p>
+        {a.h2h.totalGames === 0 ? (
+          <p className="text-xs text-muted-foreground">Sem confrontos registrados na base.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-4 gap-2 text-center mb-2">
+              <Stat label="Jogos" v={`${a.h2h.totalGames}`} />
+              <Stat label={`Vit. ${a.team1.name}`} v={`${a.h2h.team1Wins}`} />
+              <Stat label="Empates" v={`${a.h2h.draws}`} />
+              <Stat label={`Vit. ${a.team2.name}`} v={`${a.h2h.team2Wins}`} />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center mb-3">
+              <Stat label={`Gols ${a.team1.name}`} v={`${a.h2h.goalsFor1}`} />
+              <Stat label={`Gols ${a.team2.name}`} v={`${a.h2h.goalsFor2}`} />
+              <Stat label="Média gols/jogo" v={a.h2h.avgGoals.toFixed(2)} />
+            </div>
+            {a.h2h.recent.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Últimos confrontos:</p>
+                <ul className="text-[11px] text-muted-foreground space-y-0.5">
+                  {a.h2h.recent.map((m: any, i: number) => (
+                    <li key={i}>• {new Date(m.date).toLocaleDateString("pt-BR")} — {m.home} {m.score} {m.away} <span className="text-muted-foreground/70">({m.competition})</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Forma recente */}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <FormCard form={a.form1} />
+        <FormCard form={a.form2} />
+      </div>
+
+      {/* Probabilidade de gols */}
+      <div>
+        <p className="text-sm font-medium text-foreground mb-2">Probabilidade de gols</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <Stat label={`${a.team1.name} marca`} v={fmtPct(gp.team1ScoresPct)} />
+          <Stat label={`${a.team2.name} marca`} v={fmtPct(gp.team2ScoresPct)} />
+          <Stat label="Ambas marcam" v={fmtPct(gp.bothScorePct)} />
+          <Stat label="Over 0.5" v={fmtPct(gp.over05Pct)} />
+          <Stat label="Over 1.5" v={fmtPct(gp.over15Pct)} />
+          <Stat label="Over 2.5" v={fmtPct(gp.over25Pct)} />
+          <Stat label="Over 3.5" v={fmtPct(gp.over35Pct)} />
+          <Stat label="Total esperado" v={gp.expectedTotal.toFixed(2)} />
+        </div>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground text-center mt-2 italic">
+        Análise estatística baseada em dados históricos e momento das seleções. Não é garantia de resultado.
+        Gerada em {new Date(a.generatedAt).toLocaleString("pt-BR")}.
+      </p>
+    </div>
+  );
+}
+
+function ProbCell({ label, pct, highlight }: { label: string; pct: number; highlight: boolean }) {
+  return (
+    <div className={`p-2 rounded text-center ${highlight ? "bg-primary/15 border border-primary/40" : "bg-secondary"}`}>
+      <p className="text-[10px] text-muted-foreground truncate">{label}</p>
+      <p className={`text-base font-bold ${highlight ? "text-primary" : "text-foreground"}`}>{pct.toFixed(1)}%</p>
+    </div>
+  );
+}
+
+function Stat({ label, v }: { label: string; v: string }) {
+  return (
+    <div className="p-2 rounded bg-secondary text-center">
+      <p className="text-[10px] text-muted-foreground truncate">{label}</p>
+      <p className="text-sm font-medium text-foreground">{v}</p>
+    </div>
+  );
+}
+
+function FormCard({ form }: { form: any }) {
+  const w12 = form.windows.find((w: any) => w.months === 12) || form.windows[0];
+  return (
+    <div className="p-3 rounded-lg bg-secondary/30 border border-border">
+      <p className="text-sm font-medium text-foreground mb-2">{form.teamName} · últimos {w12.months}m</p>
+      <div className="grid grid-cols-4 gap-1 text-center mb-2">
+        <Stat label="Jogos" v={`${w12.games}`} />
+        <Stat label="V" v={`${w12.wins}`} />
+        <Stat label="E" v={`${w12.draws}`} />
+        <Stat label="D" v={`${w12.losses}`} />
+      </div>
+      <div className="grid grid-cols-3 gap-1 text-center mb-2">
+        <Stat label="Aproveit." v={`${w12.pointsRate.toFixed(0)}%`} />
+        <Stat label="Gols pró/jg" v={w12.avgGF.toFixed(2)} />
+        <Stat label="Gols sof/jg" v={w12.avgGA.toFixed(2)} />
+      </div>
+      {form.lastResults.length > 0 && (
+        <div className="flex gap-1 justify-center">
+          {form.lastResults.slice(0, 5).map((r: any, i: number) => (
+            <span key={i} className={`text-[10px] w-5 h-5 rounded-full inline-flex items-center justify-center font-bold ${
+              r.result === "W" ? "bg-profit/15 text-profit" : r.result === "L" ? "bg-loss/15 text-loss" : "bg-muted-foreground/20 text-muted-foreground"
+            }`} title={`${new Date(r.date).toLocaleDateString("pt-BR")} vs ${r.opponent}: ${r.goalsFor}-${r.goalsAgainst}`}>{r.result}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseAssetTeams(asset: string): { home: string; away: string } | null {
+  const m = /^(.+?)\s*×\s*(.+?)\s*\|/.exec(asset);
+  return m ? { home: m[1].trim(), away: m[2].trim() } : null;
+}
+
+function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" | "loss" | "neutral") => void; onAnalyze: (home: string, away: string) => void }) {
   const conf = parseFloat(s.confidence || "0");
   const isPending = s.outcome === "pending";
+  const teams = parseAssetTeams(s.asset);
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
@@ -268,19 +444,26 @@ function SignalRow({ s, onMark }: { s: Signal; onMark: (o: "profit" | "loss" | "
           <p className="text-sm text-foreground font-medium">{s.asset}</p>
           {s.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{s.reasoning}</p>}
         </div>
-        {isPending && (
-          <div className="flex gap-1 shrink-0">
-            <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10" onClick={() => onMark("profit")}>
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Ganhou
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {isPending && (
+            <div className="flex gap-1">
+              <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10" onClick={() => onMark("profit")}>
+                <CheckCircle2 className="w-3 h-3 mr-1" /> Ganhou
+              </Button>
+              <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10" onClick={() => onMark("loss")}>
+                <XCircle className="w-3 h-3 mr-1" /> Perdeu
+              </Button>
+              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={() => onMark("neutral")}>
+                <MinusCircle className="w-3 h-3 mr-1" /> Anular
+              </Button>
+            </div>
+          )}
+          {teams && (
+            <Button size="sm" variant="ghost" className="text-[11px] text-primary hover:bg-primary/10" onClick={() => onAnalyze(teams.home, teams.away)}>
+              <BarChart2 className="w-3 h-3 mr-1" /> Analisar partida
             </Button>
-            <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10" onClick={() => onMark("loss")}>
-              <XCircle className="w-3 h-3 mr-1" /> Perdeu
-            </Button>
-            <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={() => onMark("neutral")}>
-              <MinusCircle className="w-3 h-3 mr-1" /> Anular
-            </Button>
-          </div>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
   );

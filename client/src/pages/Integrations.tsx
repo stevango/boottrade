@@ -22,9 +22,10 @@ const ROBOT_MAP = {
   betfair: ["Oracle AI"],
   open_finance: ["Athena AI", "Titan AI", "Quantum AI", "Pulse AI", "Odin AI"],
   odds: ["Oracle AI", "Scanner de Esportes (Oportunidades)"],
+  api_football: ["Análise de Partidas (Sinais)", "Oracle AI (contexto estatístico)"],
 };
 
-type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY" | "OPENAI_API_KEY" | "BRAPI_TOKEN";
+type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY" | "API_FOOTBALL_KEY" | "OPENAI_API_KEY" | "BRAPI_TOKEN";
 
 type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key";
 type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
@@ -240,6 +241,16 @@ export default function Integrations() {
             docsUrl="https://docs.odds-api.io"
             configuredQuery={trpc.oddsIo.configured.useQuery()}
             testQuery={trpc.oddsIo.sports.useQuery}
+            isAdmin={isAdmin}
+          />
+          <ServerKeyCard
+            settingKey="API_FOOTBALL_KEY"
+            name="API-Football (estatísticas)" logo="📈" envVar="API_FOOTBALL_KEY"
+            desc="H2H, forma recente, predições e artilheiros. Alimenta a Análise de Partida em cada sinal do Oracle. Free: 100 req/dia (sem cartão)."
+            usedBy={ROBOT_MAP.api_football}
+            docsUrl="https://www.api-football.com/documentation-v3"
+            configuredQuery={trpc.matchAnalysis.configured.useQuery()}
+            testMutation={trpc.matchAnalysis.test.useMutation}
             isAdmin={isAdmin}
           />
         </Section>
@@ -479,11 +490,12 @@ function ServerKeyCard(props: {
 
 // Maps a setting key to the corresponding tRPC namespace used to invalidate
 // `configured` queries after save/clear/test.
-function providerNs(key: SecretKey): "ai" | "market" | "odds" | "oddsIo" {
+function providerNs(key: SecretKey): "ai" | "market" | "odds" | "oddsIo" | "matchAnalysis" {
   if (key === "OPENAI_API_KEY") return "ai";
   if (key === "BRAPI_TOKEN") return "market";
   if (key === "ODDS_API_KEY") return "odds";
-  return "oddsIo";
+  if (key === "ODDS_IO_API_KEY") return "oddsIo";
+  return "matchAnalysis";
 }
 
 function ConnectableCard({ item, onConnect }: { item: Connectable; onConnect: () => void }) {
