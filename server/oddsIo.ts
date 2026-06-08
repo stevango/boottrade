@@ -115,6 +115,30 @@ function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEve
   return { id, commenceTime, home, away, bookmakers };
 }
 
+// /odds requires real bookmaker slugs (the upstream errors on guesses like
+// "bet365"). Cache the canonical list for an hour to avoid burning quota on
+// every search.
+type CachedBookmakers = { csv: string; fetchedAt: number };
+let bookmakersCache: CachedBookmakers | null = null;
+const BOOKMAKERS_TTL_MS = 60 * 60 * 1000;
+
+export async function fetchBookmakers(): Promise<string> {
+  if (bookmakersCache && Date.now() - bookmakersCache.fetchedAt < BOOKMAKERS_TTL_MS) {
+    return bookmakersCache.csv;
+  }
+  const { status, json } = await callRaw("/bookmakers");
+  const list = unwrapList<Record<string, unknown>>(json);
+  const slugs = list
+    .map((b) => String(b.slug ?? b.key ?? b.id ?? b.name ?? "").trim())
+    .filter((s) => s.length > 0);
+  if (slugs.length === 0) {
+    throw new Error(`/bookmakers HTTP ${status} → sem slugs (shape: ${JSON.stringify(json).slice(0, 220)})`);
+  }
+  const csv = slugs.join(",");
+  bookmakersCache = { csv, fetchedAt: Date.now() };
+  return csv;
+}
+
 export async function fetchEvents(sport: string): Promise<RawEventLite[]> {
   const { status, text, json } = await callRaw("/events", { sport });
   const list = unwrapList<RawEventLite>(json);
@@ -142,10 +166,11 @@ export async function fetchOpportunities(opts: {
   const events = await fetchEvents(opts.sport);
   const slice = events.slice(0, maxEvents);
 
-  // /odds requires bookmakers explicitly (returns 400 "Missing bookmakers"
-  // otherwise). Send a broad default list — the API filters to whatever the
-  // caller's plan actually covers (free plan = 2 bookmakers).
-  const bookmakers = opts.bookmakers || "bet365,betano,pinnacle,1xbet,williamhill,unibet,bwin,marathonbet,sbobet,betfair";
+  // /odds requires real bookmaker slugs (the upstream rejects guessed names
+  // like "bet365" with a 400). When the caller doesn't pass an explicit list,
+  // fetch the canonical /v3/bookmakers list once and reuse it; the upstream
+  // still filters to whatever the caller's plan actually covers.
+  const bookmakers = opts.bookmakers || await fetchBookmakers();
 
   const normalized: NormalizedEvent[] = [];
   let firstOddsError: string | null = null;
