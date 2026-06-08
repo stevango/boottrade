@@ -84,6 +84,21 @@ export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
 // vary across endpoint versions so we accept several aliases.
 type RawEventLite = { id?: string; event_id?: string; eventId?: string; home?: string; away?: string; home_team?: string; away_team?: string; homeTeam?: string; awayTeam?: string; commence_time?: string; commenceTime?: string; start_time?: string; startTime?: string };
 
+// Coerce a value that may be either an array of items, an object keyed by
+// name (e.g. {Bet365: {...}, Betano: {...}}), or absent into a flat array.
+// When it's object-keyed, the key becomes a `name` field on each entry.
+function toArray(v: unknown, nameKey = "name"): Record<string, unknown>[] {
+  if (Array.isArray(v)) return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+  if (v && typeof v === "object") {
+    return Object.entries(v as Record<string, unknown>).map(([k, val]) => {
+      const obj = val && typeof val === "object" ? { ...(val as Record<string, unknown>) } : {};
+      if (!obj[nameKey]) obj[nameKey] = k;
+      return obj;
+    });
+  }
+  return [];
+}
+
 function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const ev = raw as Record<string, unknown>;
@@ -92,17 +107,14 @@ function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEve
   const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? fallback?.away ?? fallback?.away_team ?? fallback?.awayTeam ?? "");
   const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? fallback?.commence_time ?? fallback?.commenceTime ?? fallback?.start_time ?? fallback?.startTime ?? "");
   if (!home || !away) return null;
-  const bms = (ev.bookmakers ?? ev.books ?? ev.odds ?? []) as unknown[];
-  const bookmakers = bms.map((b) => {
-    const bm = b as Record<string, unknown>;
+  const bms = toArray(ev.bookmakers ?? ev.books ?? ev.odds);
+  const bookmakers = bms.map((bm) => {
     const name = String(bm.title ?? bm.name ?? bm.key ?? bm.bookmaker ?? "");
-    const mks = (bm.markets ?? bm.lines ?? bm.bets ?? []) as unknown[];
-    const markets = mks.map((m) => {
-      const mk = m as Record<string, unknown>;
+    const mks = toArray(bm.markets ?? bm.lines ?? bm.bets, "key");
+    const markets = mks.map((mk) => {
       const key = String(mk.key ?? mk.name ?? mk.market ?? mk.type ?? "");
-      const outs = (mk.outcomes ?? mk.selections ?? mk.lines ?? mk.options ?? []) as unknown[];
-      const outcomes = outs.map((o) => {
-        const oc = o as Record<string, unknown>;
+      const outs = toArray(mk.outcomes ?? mk.selections ?? mk.lines ?? mk.options);
+      const outcomes = outs.map((oc) => {
         const ocName = String(oc.name ?? oc.label ?? oc.selection ?? oc.outcome ?? "");
         const price = Number(oc.price ?? oc.odds ?? oc.decimal ?? oc.value ?? 0);
         const point = oc.point != null ? Number(oc.point) : oc.handicap != null ? Number(oc.handicap) : undefined;
