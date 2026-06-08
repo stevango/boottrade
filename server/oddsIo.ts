@@ -52,7 +52,7 @@ function unwrapList<T>(raw: unknown): T[] {
   if (Array.isArray(raw)) return raw as T[];
   if (raw && typeof raw === "object") {
     const o = raw as Record<string, unknown>;
-    for (const key of ["data", "sports", "results", "items", "list"]) {
+    for (const key of ["data", "sports", "results", "items", "list", "bookmakers", "events"]) {
       if (Array.isArray(o[key])) return o[key] as T[];
     }
   }
