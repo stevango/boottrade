@@ -135,7 +135,7 @@ export async function fetchOpportunities(opts: {
   bookmakers?: string;
   edgeThresholdPct?: number;
   maxEvents?: number;
-}): Promise<{ valueBets: ValueBet[]; eventCount: number }> {
+}): Promise<{ valueBets: ValueBet[]; eventCount: number; diag?: string }> {
   // odds-api.io requires fetching odds per-event: 1 call to /events, then N
   // calls to /odds?eventId=…. Cap N so we don't burn the user's hourly quota.
   const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 10, 20));
@@ -143,6 +143,9 @@ export async function fetchOpportunities(opts: {
   const slice = events.slice(0, maxEvents);
 
   const normalized: NormalizedEvent[] = [];
+  let firstOddsError: string | null = null;
+  let firstOddsPeek: string | null = null;
+  let eventsWithoutBookmakers = 0;
   for (const e of slice) {
     const eventId = String(e.id ?? e.event_id ?? e.eventId ?? "");
     if (!eventId) continue;
@@ -151,11 +154,23 @@ export async function fetchOpportunities(opts: {
     try {
       const { json } = await callRaw("/odds", params);
       const n = normalizeOneEvent(json, e);
-      if (n && n.bookmakers.length > 0) normalized.push(n);
+      if (n && n.bookmakers.length > 0) {
+        normalized.push(n);
+      } else {
+        eventsWithoutBookmakers++;
+        if (!firstOddsPeek) firstOddsPeek = `eventId=${eventId} → ${JSON.stringify(json).slice(0, 220)}`;
+      }
     } catch (err) {
+      if (!firstOddsError) firstOddsError = `eventId=${eventId} → ${String(err).slice(0, 200)}`;
       console.warn(`[oddsIo] /odds eventId=${eventId} failed:`, err);
     }
   }
   const valueBets = computeValueBets(normalized, opts.edgeThresholdPct ?? 3);
-  return { valueBets, eventCount: normalized.length };
+  let diag: string | undefined;
+  if (normalized.length === 0) {
+    if (firstOddsError) diag = `/events trouxe ${events.length} eventos, mas /odds falhou — ${firstOddsError}`;
+    else if (eventsWithoutBookmakers > 0) diag = `/events trouxe ${events.length} eventos, mas nenhum tinha bookmakers usáveis. Amostra: ${firstOddsPeek}`;
+    else diag = `Nenhum eventId válido nos ${events.length} eventos retornados.`;
+  }
+  return { valueBets, eventCount: normalized.length, diag };
 }

@@ -520,8 +520,8 @@ export const appRouter = router({
           return { configured: false as const, valueBets: [], message: "Feed Odds-API.io não configurado." };
         }
         try {
-          const { valueBets, eventCount } = await fetchOddsIoOpportunities(input);
-          return { configured: true as const, valueBets, eventCount, message: null };
+          const { valueBets, eventCount, diag } = await fetchOddsIoOpportunities(input);
+          return { configured: true as const, valueBets, eventCount, message: diag ?? null };
         } catch (error) {
           console.error("[oddsIo] opportunities failed:", error);
           return { configured: true as const, valueBets: [], eventCount: 0, message: `Falha ao buscar: ${String(error).slice(0, 200)}` };
