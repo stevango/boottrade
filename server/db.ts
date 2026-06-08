@@ -288,6 +288,32 @@ export async function getBrainDecisions(userId: number, robotId: number, limit: 
     .limit(limit);
 }
 
+// List all recent brain decisions across robots, joined with robot metadata
+// so the UI can render the source robot. Used by the "Sinais ao Vivo" page.
+export async function getRecentSignals(userId: number, limit: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: brainDecisions.id,
+    robotId: brainDecisions.robotId,
+    robotName: robots.name,
+    robotSlug: robots.slug,
+    market: robots.market,
+    decision: brainDecisions.decision,
+    asset: brainDecisions.asset,
+    confidence: brainDecisions.confidence,
+    reasoning: brainDecisions.reasoning,
+    outcome: brainDecisions.outcome,
+    profitAmount: brainDecisions.profitAmount,
+    executedBy: brainDecisions.executedBy,
+    createdAt: brainDecisions.createdAt,
+  }).from(brainDecisions)
+    .leftJoin(robots, eq(brainDecisions.robotId, robots.id))
+    .where(eq(brainDecisions.userId, userId))
+    .orderBy(desc(brainDecisions.createdAt))
+    .limit(limit);
+}
+
 export async function toggleRobotMode(userId: number, robotId: number, mode: "manual" | "semi_auto" | "auto") {
   const db = await getDb();
   if (!db) return { success: false };

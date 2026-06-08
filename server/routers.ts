@@ -14,7 +14,7 @@ import {
   getAllRobots, getRobotById, getRobotTrades, getUserTrades, getUserBacktests,
   getUserRobotStatuses, setUserRobotStatus,
   getUserRiskSettings, getMarketplaceListings, getSocialFeed, getAllUsers,
-  getRobotBrain, getBrainDecisions, getPortfolioAssets, getFinancialGoals,
+  getRobotBrain, getBrainDecisions, getRecentSignals, getPortfolioAssets, getFinancialGoals,
   getDailyPnl, upsertRobotBrain, addBrainDecision, addPortfolioAsset,
   updatePortfolioAsset, deletePortfolioAsset, addFinancialGoal,
   updateFinancialGoal, deleteFinancialGoal, getAiConversation, saveAiConversation,
@@ -34,6 +34,7 @@ import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
+import { runOracleForUser } from "./oracle";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -132,6 +133,24 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         return setUserRobotStatus(ctx.user.id, input.robotId, input.status);
       }),
+  }),
+
+  signals: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .query(async ({ ctx, input }) => getRecentSignals(ctx.user.id, input?.limit ?? 100)),
+    markResult: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        outcome: z.enum(["profit", "loss", "neutral"]),
+        profitAmount: z.number().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return resolveDecision(ctx.user.id, input.id, input.outcome, input.profitAmount ?? 0);
+      }),
+    runOracleNow: protectedProcedure.mutation(async ({ ctx }) => {
+      return runOracleForUser(ctx.user.id);
+    }),
   }),
 
   brain: router({

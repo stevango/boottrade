@@ -8,6 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { runOracleForAllActive } from "../oracle";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -88,6 +89,26 @@ async function startServer() {
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  // Background scheduler — runs the Oracle AI sports scan every hour for
+  // every user who has the robot activated. First tick fires 5 min after
+  // boot to give DB connections time to warm up.
+  if (process.env.NODE_ENV !== "test") {
+    const ORACLE_INTERVAL_MS = 60 * 60 * 1000;
+    const ORACLE_FIRST_DELAY_MS = 5 * 60 * 1000;
+    const tickOracle = async () => {
+      try {
+        const results = await runOracleForAllActive();
+        if (results.length > 0) {
+          const total = results.reduce((s, r) => s + r.created, 0);
+          console.log(`[oracle] tick: ${results.length} usuário(s), ${total} sinais criados`);
+        }
+      } catch (e) {
+        console.error("[oracle] tick failed:", e);
+      }
+    };
+    setTimeout(() => { tickOracle(); setInterval(tickOracle, ORACLE_INTERVAL_MS); }, ORACLE_FIRST_DELAY_MS);
+  }
 }
 
 startServer().catch(console.error);

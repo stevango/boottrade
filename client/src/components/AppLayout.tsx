@@ -24,6 +24,7 @@ import {
   Users,
   Wallet,
   X,
+  Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -36,6 +37,7 @@ const navItems = [
   { path: "/advisor", label: "Consultor IA", icon: Sparkles },
   { path: "/allocator", label: "Alocação IA", icon: PieChart },
   { path: "/opportunities", label: "Oportunidades", icon: Radar },
+  { path: "/signals", label: "Sinais ao Vivo", icon: Zap },
   { path: "/pnl", label: "P&L", icon: BarChart3 },
   { path: "/backtest", label: "Backtest", icon: FlaskConical },
   { path: "/paper-trade", label: "Paper Trade", icon: TrendingUp },
