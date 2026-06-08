@@ -84,21 +84,22 @@ export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
 // vary across endpoint versions so we accept several aliases.
 type RawEventLite = { id?: string; event_id?: string; eventId?: string; home?: string; away?: string; home_team?: string; away_team?: string; homeTeam?: string; awayTeam?: string; commence_time?: string; commenceTime?: string; start_time?: string; startTime?: string };
 
-// Coerce a value that may be either an array of items, an object keyed by
-// name (e.g. {Bet365: {...}, Betano: {...}}), or absent into a flat array.
-// When it's object-keyed, the key becomes a `name` field on each entry.
-function toArray(v: unknown, nameKey = "name"): Record<string, unknown>[] {
-  if (Array.isArray(v)) return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
-  if (v && typeof v === "object") {
-    return Object.entries(v as Record<string, unknown>).map(([k, val]) => {
-      const obj = val && typeof val === "object" ? { ...(val as Record<string, unknown>) } : {};
-      if (!obj[nameKey]) obj[nameKey] = k;
-      return obj;
-    });
-  }
-  return [];
-}
+// Keys inside an odds object that are metadata, not outcome prices.
+const ODDS_META_KEYS = new Set(["hdp", "handicap", "line", "label", "name", "updatedAt", "point", "spread", "total"]);
 
+// odds-api.io structures /odds responses like:
+//   bookmakers: {
+//     Bet365: [
+//       { name: "ML", odds: [{ home: "1.444", draw: "4.333", away: "7.500" }] },
+//       { name: "Totals", odds: [{ hdp: 2.25, over: "1.900", under: "1.950" }] }
+//     ],
+//     Betano: [...]
+//   }
+// Each "odds" entry is a flat object whose KEYS are the outcome names
+// (home/draw/away/over/under/yes/no/label) and VALUES are decimal prices.
+// `hdp`/`label` are metadata. For Double Chance markets the `label` field
+// names the specific outcome ("Mexico or Draw") and the price is under
+// `under`/`over`.
 function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const ev = raw as Record<string, unknown>;
@@ -107,23 +108,47 @@ function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEve
   const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? fallback?.away ?? fallback?.away_team ?? fallback?.awayTeam ?? "");
   const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? fallback?.commence_time ?? fallback?.commenceTime ?? fallback?.start_time ?? fallback?.startTime ?? "");
   if (!home || !away) return null;
-  const bms = toArray(ev.bookmakers ?? ev.books ?? ev.odds ?? ev.markets ?? ev.prices ?? ev.lines);
-  const bookmakers = bms.map((bm) => {
-    const name = String(bm.title ?? bm.name ?? bm.key ?? bm.bookmaker ?? "");
-    const mks = toArray(bm.markets ?? bm.lines ?? bm.bets, "key");
-    const markets = mks.map((mk) => {
-      const key = String(mk.key ?? mk.name ?? mk.market ?? mk.type ?? "");
-      const outs = toArray(mk.outcomes ?? mk.selections ?? mk.lines ?? mk.options);
-      const outcomes = outs.map((oc) => {
-        const ocName = String(oc.name ?? oc.label ?? oc.selection ?? oc.outcome ?? "");
-        const price = Number(oc.price ?? oc.odds ?? oc.decimal ?? oc.value ?? 0);
-        const point = oc.point != null ? Number(oc.point) : oc.handicap != null ? Number(oc.handicap) : undefined;
-        return { name: ocName, price, point };
-      }).filter((o) => o.name && Number.isFinite(o.price) && o.price > 1);
-      return { key, outcomes };
+
+  const bmsRaw = ev.bookmakers ?? ev.books ?? ev.odds;
+  if (!bmsRaw || typeof bmsRaw !== "object") return null;
+  const bmsEntries: [string, unknown][] = Array.isArray(bmsRaw)
+    ? bmsRaw.map((bm, i) => {
+        const o = (bm && typeof bm === "object" ? bm : {}) as Record<string, unknown>;
+        const name = String(o.name ?? o.title ?? o.key ?? `bookie_${i}`);
+        return [name, o.markets ?? o.lines ?? o.bets ?? bm];
+      })
+    : Object.entries(bmsRaw as Record<string, unknown>);
+
+  const bookmakers = bmsEntries.map(([bookieName, marketsRaw]) => {
+    const marketsList = Array.isArray(marketsRaw) ? marketsRaw : [];
+    const markets = marketsList.map((mk) => {
+      const m = (mk && typeof mk === "object" ? mk : {}) as Record<string, unknown>;
+      const marketKey = String(m.name ?? m.key ?? m.market ?? m.type ?? "").trim();
+      if (!marketKey) return { key: "", outcomes: [] as NormalizedEvent["bookmakers"][number]["markets"][number]["outcomes"] };
+      const oddsList = Array.isArray(m.odds) ? m.odds : Array.isArray(m.outcomes) ? m.outcomes : Array.isArray(m.selections) ? m.selections : [];
+      const outcomes: { name: string; price: number; point?: number }[] = [];
+      for (const entry of oddsList) {
+        if (!entry || typeof entry !== "object") continue;
+        const e = entry as Record<string, unknown>;
+        const point = e.hdp != null ? Number(e.hdp) : e.handicap != null ? Number(e.handicap) : e.point != null ? Number(e.point) : undefined;
+        const label = typeof e.label === "string" ? e.label : null;
+        for (const [k, v] of Object.entries(e)) {
+          if (ODDS_META_KEYS.has(k)) continue;
+          const price = Number(v);
+          if (!Number.isFinite(price) || price <= 1) continue;
+          // For label-style markets (Double Chance), the outcome is the
+          // label itself; the key ("under"/"over") is just where the price
+          // lives. Use the label so different bookies' "Mexico or Draw"
+          // entries bucket together.
+          const name = label ? label : k;
+          outcomes.push({ name, price, ...(Number.isFinite(point as number) ? { point } : {}) });
+        }
+      }
+      return { key: marketKey, outcomes };
     }).filter((mk) => mk.key && mk.outcomes.length > 0);
-    return { name, markets };
+    return { name: String(bookieName), markets };
   }).filter((bm) => bm.name && bm.markets.length > 0);
+
   return { id, commenceTime, home, away, bookmakers };
 }
 
