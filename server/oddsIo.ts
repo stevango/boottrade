@@ -131,9 +131,13 @@ export async function fetchBookmakers(): Promise<string> {
   // "Access denied. You're allowed max N bookmakers" because the upstream
   // validates the request against the account's selection.
   const { status, json } = await callRaw("/bookmakers/selected");
-  const list = unwrapList<Record<string, unknown>>(json);
+  const list = unwrapList<string | Record<string, unknown>>(json);
   const slugs = list
-    .map((b) => String(b.slug ?? b.key ?? b.id ?? b.name ?? "").trim())
+    .map((b) => {
+      if (typeof b === "string") return b.trim();
+      if (b && typeof b === "object") return String(b.slug ?? b.key ?? b.id ?? b.name ?? "").trim();
+      return "";
+    })
     .filter((s) => s.length > 0);
   if (slugs.length === 0) {
     throw new Error(`/bookmakers/selected HTTP ${status} → sem slugs selecionados (configure no painel da Odds-API.io). Shape: ${JSON.stringify(json).slice(0, 220)}`);
