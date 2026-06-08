@@ -76,7 +76,26 @@ export default function Goals() {
             </h1>
             <p className="text-muted-foreground">Defina objetivos e acompanhe sua evolução financeira</p>
           </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-primary/40 text-primary hover:bg-primary/10"
+              onClick={() => {
+                setNewGoal({
+                  title: "Copa do Mundo 2026 — Banca de Apostas",
+                  targetAmount: 5000,
+                  deadline: "2026-07-19",
+                  priority: "low",
+                  category: "projeto",
+                  monthlyContribution: 0,
+                });
+                setDialogOpen(true);
+              }}
+              title="Pré-preenche uma banca defensiva para apostas durante a Copa do Mundo 2026 (11/jun a 19/jul)"
+            >
+              <Trophy className="w-4 h-4 mr-2" /> Preset: Copa 2026
+            </Button>
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <Plus className="w-4 h-4 mr-2" /> Nova Meta
@@ -139,6 +158,7 @@ export default function Goals() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Overall Progress */}

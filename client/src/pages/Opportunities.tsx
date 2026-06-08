@@ -267,6 +267,19 @@ function SportsPanel() {
 
   return (
     <>
+      <Card className="bg-primary/5 border-primary/20">
+        <CardContent className="p-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Trophy className="w-4 h-4 text-primary shrink-0" />
+            <span>
+              <strong className="text-foreground">Copa do Mundo 2026</strong> começa em breve.
+              Estruture uma banca defensiva com o preset.
+            </span>
+          </div>
+          <a href="/goals" className="text-xs text-primary hover:underline">Criar meta →</a>
+        </CardContent>
+      </Card>
+
       <Card className="bg-card border-border">
         <CardHeader className="pb-3"><CardTitle className="text-base">Buscar value bets</CardTitle></CardHeader>
         <CardContent className="space-y-3">
