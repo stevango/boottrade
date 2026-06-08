@@ -8,7 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { runOracleForAllActive } from "../oracle";
+import { runOracleForAllActive, tryResolveAllOracleSignals } from "../oracle";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -98,10 +98,12 @@ async function startServer() {
     const ORACLE_FIRST_DELAY_MS = 5 * 60 * 1000;
     const tickOracle = async () => {
       try {
-        const results = await runOracleForAllActive();
-        if (results.length > 0) {
-          const total = results.reduce((s, r) => s + r.created, 0);
-          console.log(`[oracle] tick: ${results.length} usuário(s), ${total} sinais criados`);
+        const created = await runOracleForAllActive();
+        const resolved = await tryResolveAllOracleSignals();
+        const totalC = created.reduce((s, r) => s + r.created, 0);
+        const totalR = resolved.reduce((s, r) => s + r.resolved, 0);
+        if (totalC > 0 || totalR > 0) {
+          console.log(`[oracle] tick: ${created.length} usuário(s), ${totalC} novos sinais, ${totalR} resolvidos automaticamente`);
         }
       } catch (e) {
         console.error("[oracle] tick failed:", e);

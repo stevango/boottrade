@@ -34,7 +34,7 @@ import { analyzeSeries } from "./signals";
 import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } from "./marketData";
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
-import { runOracleForUser } from "./oracle";
+import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -150,6 +150,9 @@ export const appRouter = router({
       }),
     runOracleNow: protectedProcedure.mutation(async ({ ctx }) => {
       return runOracleForUser(ctx.user.id);
+    }),
+    resolveNow: protectedProcedure.mutation(async ({ ctx }) => {
+      return tryResolveOracleSignals(ctx.user.id);
     }),
   }),
 

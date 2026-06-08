@@ -3,8 +3,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -57,6 +59,13 @@ export default function Signals() {
     },
     onError: () => toast.error("Falha ao rodar Oracle."),
   });
+  const resolveMut = trpc.signals.resolveNow.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Resultados atualizados — ${r.resolved} de ${r.checked} sinais resolvidos automaticamente${r.errors ? ` (${r.errors} erros)` : ""}`);
+      utils.signals.list.invalidate();
+    },
+    onError: () => toast.error("Falha ao buscar resultados."),
+  });
 
   const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral" } | null>(null);
   const [profit, setProfit] = useState<string>("");
@@ -67,7 +76,30 @@ export default function Signals() {
     markMut.mutate({ id: marking.id, outcome: marking.outcome, profitAmount: amt });
   };
 
-  const signals: Signal[] = (data as unknown as Signal[]) ?? [];
+  // Filters
+  const [minEdge, setMinEdge] = useState<string>("0");
+  const [robotFilter, setRobotFilter] = useState<string>("__all__");
+  const [marketFilter, setMarketFilter] = useState<string>("__all__");
+  const [statusFilter, setStatusFilter] = useState<string>("__all__");
+
+  const all: Signal[] = (data as unknown as Signal[]) ?? [];
+  const robotOptions = Array.from(new Set(all.map((s) => s.robotName).filter((n): n is string => !!n))).sort();
+  const marketOptions = Array.from(new Set(all.map((s) => {
+    const m = s.asset.split("|")[1]?.trim();
+    return m;
+  }).filter((m): m is string => !!m))).sort();
+
+  const minEdgeNum = parseFloat(minEdge) || 0;
+  const signals = all.filter((s) => {
+    if (parseFloat(s.confidence || "0") < minEdgeNum) return false;
+    if (robotFilter !== "__all__" && s.robotName !== robotFilter) return false;
+    if (marketFilter !== "__all__") {
+      const m = s.asset.split("|")[1]?.trim();
+      if (m !== marketFilter) return false;
+    }
+    if (statusFilter !== "__all__" && s.outcome !== statusFilter) return false;
+    return true;
+  });
   const pending = signals.filter((s) => s.outcome === "pending");
   const past = signals.filter((s) => s.outcome !== "pending");
 
@@ -83,15 +115,73 @@ export default function Signals() {
               Sinais gerados pelos robôs ativos. Marque o resultado depois pra o cérebro aprender.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
               {isFetching ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />} Recarregar
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => resolveMut.mutate()} disabled={resolveMut.isPending}
+              title="Consulta os placares dos jogos já encerrados e marca Ganhou/Perdeu automaticamente nos sinais h2h.">
+              {resolveMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <CheckCircle2 className="w-3 h-3 mr-1" />} Atualizar resultados
             </Button>
             <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
               {runMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Rodar Oracle agora
             </Button>
           </div>
         </div>
+
+        {all.length > 0 && (
+          <Card className="bg-card border-border">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Filtros · {signals.length} de {all.length} sinais</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Edge mínimo (%)</Label>
+                  <Input
+                    type="number" min="0" max="100" step="0.5" value={minEdge}
+                    onChange={(e) => setMinEdge(e.target.value)}
+                    className="bg-secondary border-border h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Robô</Label>
+                  <Select value={robotFilter} onValueChange={setRobotFilter}>
+                    <SelectTrigger className="bg-secondary border-border h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      {robotOptions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Mercado</Label>
+                  <Select value={marketFilter} onValueChange={setMarketFilter}>
+                    <SelectTrigger className="bg-secondary border-border h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      {marketOptions.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Status</Label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="bg-secondary border-border h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      <SelectItem value="pending">Pendentes</SelectItem>
+                      <SelectItem value="profit">Ganhou</SelectItem>
+                      <SelectItem value="loss">Perdeu</SelectItem>
+                      <SelectItem value="neutral">Anulado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {isLoading && (
           <Card className="bg-card border-border"><CardContent className="p-6 flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></CardContent></Card>

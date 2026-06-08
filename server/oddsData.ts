@@ -75,3 +75,29 @@ export async function fetchOpportunities(opts: {
   const valueBets = computeValueBets(normalized, opts.edgeThresholdPct ?? 3);
   return { events, valueBets };
 }
+
+// Final/in-progress scores for a sport over the last N days. Returned by the
+// /sports/{sport}/scores endpoint. completed=true means the game is final and
+// the score can be trusted for resolving pending bets.
+export type ScoreEvent = {
+  id: string;
+  sport_key: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+  completed: boolean;
+  scores: { name: string; score: string }[] | null;
+};
+
+export async function fetchScores(sport: string, daysFrom = 3): Promise<ScoreEvent[]> {
+  const key = await getOddsApiKey();
+  if (!key) throw new OddsNotConfiguredError();
+  const params = new URLSearchParams({ apiKey: key, daysFrom: String(daysFrom), dateFormat: "iso" });
+  const url = `${BASE}/sports/${encodeURIComponent(sport)}/scores?${params.toString()}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Odds API scores ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as ScoreEvent[];
+}
