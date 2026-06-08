@@ -134,7 +134,9 @@ export async function fetchBookmakers(): Promise<string> {
   if (slugs.length === 0) {
     throw new Error(`/bookmakers HTTP ${status} → sem slugs (shape: ${JSON.stringify(json).slice(0, 220)})`);
   }
-  const csv = slugs.join(",");
+  // /odds caps the bookmakers param at 30 entries. Use the first 30 — the
+  // upstream filters to whichever ones the caller's plan covers anyway.
+  const csv = slugs.slice(0, 30).join(",");
   bookmakersCache = { csv, fetchedAt: Date.now() };
   return csv;
 }
