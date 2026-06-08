@@ -67,19 +67,21 @@ function unwrapList<T>(raw: unknown): T[] {
 export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
   const { status, text, json } = await callRaw("/sports");
   const list = unwrapList<OddsIoSport>(json);
-  if (list.length === 0) {
-    const peek = json == null
-      ? (text ? `body não-JSON: ${text.slice(0, 160)}` : "body vazio")
-      : Array.isArray(json) ? "[] (array vazio — chave válida mas plano sem esportes liberados?)"
-      : `shape inesperado: ${JSON.stringify(json).slice(0, 160)}`;
-    throw new Error(`/sports HTTP ${status} → ${peek}`);
-  }
-  return list.map((s) => ({
+  const mapped = list.map((s) => ({
     key: s.key ?? s.id ?? "",
     title: s.title ?? s.name ?? s.key ?? s.id ?? "",
     group: s.group ?? "Outros",
     active: s.active !== false,
   })).filter((s) => s.key);
+  if (mapped.length === 0) {
+    let peek: string;
+    if (json == null) peek = text ? `body não-JSON: ${text.slice(0, 200)}` : "body vazio";
+    else if (Array.isArray(json) && json.length === 0) peek = "[] (array vazio — token válido mas plano sem esportes)";
+    else if (list.length === 0) peek = `shape (sem array reconhecido): ${JSON.stringify(json).slice(0, 220)}`;
+    else peek = `${list.length} itens devolvidos mas sem campos key/id — primeiro item: ${JSON.stringify(list[0]).slice(0, 220)}`;
+    throw new Error(`/sports HTTP ${status} → ${peek}`);
+  }
+  return mapped;
 }
 
 // Tolerant parser for /odds — different odds APIs return slightly different
