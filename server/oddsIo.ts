@@ -27,11 +27,6 @@ export async function isOddsIoConfigured(): Promise<boolean> {
 type OddsIoSport = { key?: string; id?: string; slug?: string; name?: string; title?: string; group?: string; category?: string; active?: boolean };
 export type OddsIoSportNormalized = { key: string; title: string; group: string; active: boolean };
 
-async function call<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  const { json } = await callRaw(path, params);
-  return json as T;
-}
-
 // Returns the HTTP status, the raw text body and the parsed JSON (if any) so
 // callers can build precise diagnostic messages when the body shape isn't what
 // they expected. The /sports endpoint at odds-api.io has been observed to
@@ -84,38 +79,53 @@ export async function fetchSports(): Promise<OddsIoSportNormalized[]> {
   return mapped;
 }
 
-// Tolerant parser for /odds — different odds APIs return slightly different
-// JSON shapes. Try common field names and skip what doesn't parse.
-function normalize(raw: unknown[]): NormalizedEvent[] {
-  const events: NormalizedEvent[] = [];
-  for (const r of raw ?? []) {
-    const ev = r as Record<string, unknown>;
-    const id = String(ev.id ?? ev.event_id ?? ev.eventId ?? "");
-    const home = String(ev.home_team ?? ev.home ?? ev.homeTeam ?? "");
-    const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? "");
-    const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? "");
-    if (!home || !away) continue;
-    const bms = (ev.bookmakers ?? ev.books ?? []) as unknown[];
-    const bookmakers = bms.map((b) => {
-      const bm = b as Record<string, unknown>;
-      const name = String(bm.title ?? bm.name ?? bm.key ?? "");
-      const mks = (bm.markets ?? bm.lines ?? []) as unknown[];
-      const markets = mks.map((m) => {
-        const mk = m as Record<string, unknown>;
-        const key = String(mk.key ?? mk.name ?? mk.market ?? "");
-        const outs = (mk.outcomes ?? mk.selections ?? mk.lines ?? []) as unknown[];
-        const outcomes = outs.map((o) => {
-          const oc = o as Record<string, unknown>;
-          const ocName = String(oc.name ?? oc.label ?? oc.selection ?? "");
-          const price = Number(oc.price ?? oc.odds ?? oc.decimal ?? 0);
-          const point = oc.point != null ? Number(oc.point) : oc.handicap != null ? Number(oc.handicap) : undefined;
-          return { name: ocName, price, point };
-        }).filter((o) => o.name && Number.isFinite(o.price) && o.price > 1);
-        return { key, outcomes };
-      }).filter((mk) => mk.key && mk.outcomes.length > 0);
-      return { name, markets };
-    }).filter((bm) => bm.name && bm.markets.length > 0);
-    events.push({ id, commenceTime, home, away, bookmakers });
+// Tolerant parser for a single /odds event response. odds-api.io returns the
+// event-level odds with bookmakers/markets/outcomes nested inside; field names
+// vary across endpoint versions so we accept several aliases.
+type RawEventLite = { id?: string; event_id?: string; eventId?: string; home?: string; away?: string; home_team?: string; away_team?: string; homeTeam?: string; awayTeam?: string; commence_time?: string; commenceTime?: string; start_time?: string; startTime?: string };
+
+function normalizeOneEvent(raw: unknown, fallback?: RawEventLite): NormalizedEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const ev = raw as Record<string, unknown>;
+  const id = String(ev.id ?? ev.event_id ?? ev.eventId ?? fallback?.id ?? fallback?.event_id ?? fallback?.eventId ?? "");
+  const home = String(ev.home_team ?? ev.home ?? ev.homeTeam ?? fallback?.home ?? fallback?.home_team ?? fallback?.homeTeam ?? "");
+  const away = String(ev.away_team ?? ev.away ?? ev.awayTeam ?? fallback?.away ?? fallback?.away_team ?? fallback?.awayTeam ?? "");
+  const commenceTime = String(ev.commence_time ?? ev.commenceTime ?? ev.start_time ?? ev.startTime ?? fallback?.commence_time ?? fallback?.commenceTime ?? fallback?.start_time ?? fallback?.startTime ?? "");
+  if (!home || !away) return null;
+  const bms = (ev.bookmakers ?? ev.books ?? ev.odds ?? []) as unknown[];
+  const bookmakers = bms.map((b) => {
+    const bm = b as Record<string, unknown>;
+    const name = String(bm.title ?? bm.name ?? bm.key ?? bm.bookmaker ?? "");
+    const mks = (bm.markets ?? bm.lines ?? bm.bets ?? []) as unknown[];
+    const markets = mks.map((m) => {
+      const mk = m as Record<string, unknown>;
+      const key = String(mk.key ?? mk.name ?? mk.market ?? mk.type ?? "");
+      const outs = (mk.outcomes ?? mk.selections ?? mk.lines ?? mk.options ?? []) as unknown[];
+      const outcomes = outs.map((o) => {
+        const oc = o as Record<string, unknown>;
+        const ocName = String(oc.name ?? oc.label ?? oc.selection ?? oc.outcome ?? "");
+        const price = Number(oc.price ?? oc.odds ?? oc.decimal ?? oc.value ?? 0);
+        const point = oc.point != null ? Number(oc.point) : oc.handicap != null ? Number(oc.handicap) : undefined;
+        return { name: ocName, price, point };
+      }).filter((o) => o.name && Number.isFinite(o.price) && o.price > 1);
+      return { key, outcomes };
+    }).filter((mk) => mk.key && mk.outcomes.length > 0);
+    return { name, markets };
+  }).filter((bm) => bm.name && bm.markets.length > 0);
+  return { id, commenceTime, home, away, bookmakers };
+}
+
+export async function fetchEvents(sport: string): Promise<RawEventLite[]> {
+  const { status, text, json } = await callRaw("/events", { sport });
+  const list = unwrapList<RawEventLite>(json);
+  const events = list.filter((e) => e && (e.id || e.event_id || e.eventId));
+  if (events.length === 0) {
+    const peek = json == null
+      ? (text ? `body não-JSON: ${text.slice(0, 200)}` : "body vazio")
+      : Array.isArray(json) && json.length === 0 ? "sem eventos disponíveis pra esse esporte"
+      : list.length === 0 ? `shape (sem array): ${JSON.stringify(json).slice(0, 220)}`
+      : `${list.length} itens sem campo id — primeiro: ${JSON.stringify(list[0]).slice(0, 220)}`;
+    throw new Error(`/events HTTP ${status} → ${peek}`);
   }
   return events;
 }
@@ -124,11 +134,28 @@ export async function fetchOpportunities(opts: {
   sport: string;
   bookmakers?: string;
   edgeThresholdPct?: number;
+  maxEvents?: number;
 }): Promise<{ valueBets: ValueBet[]; eventCount: number }> {
-  const params: Record<string, string> = { sport: opts.sport };
-  if (opts.bookmakers) params.bookmakers = opts.bookmakers;
-  const raw = await call<unknown>("/odds", params);
-  const events = normalize(unwrapList<unknown>(raw));
-  const valueBets = computeValueBets(events, opts.edgeThresholdPct ?? 3);
-  return { valueBets, eventCount: events.length };
+  // odds-api.io requires fetching odds per-event: 1 call to /events, then N
+  // calls to /odds?eventId=…. Cap N so we don't burn the user's hourly quota.
+  const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 10, 20));
+  const events = await fetchEvents(opts.sport);
+  const slice = events.slice(0, maxEvents);
+
+  const normalized: NormalizedEvent[] = [];
+  for (const e of slice) {
+    const eventId = String(e.id ?? e.event_id ?? e.eventId ?? "");
+    if (!eventId) continue;
+    const params: Record<string, string> = { eventId };
+    if (opts.bookmakers) params.bookmakers = opts.bookmakers;
+    try {
+      const { json } = await callRaw("/odds", params);
+      const n = normalizeOneEvent(json, e);
+      if (n && n.bookmakers.length > 0) normalized.push(n);
+    } catch (err) {
+      console.warn(`[oddsIo] /odds eventId=${eventId} failed:`, err);
+    }
+  }
+  const valueBets = computeValueBets(normalized, opts.edgeThresholdPct ?? 3);
+  return { valueBets, eventCount: normalized.length };
 }
