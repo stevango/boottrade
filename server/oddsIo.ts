@@ -164,7 +164,9 @@ export async function fetchOpportunities(opts: {
 }): Promise<{ valueBets: ValueBet[]; eventCount: number; diag?: string }> {
   // odds-api.io requires fetching odds per-event: 1 call to /events, then N
   // calls to /odds?eventId=…. Cap N so we don't burn the user's hourly quota.
-  const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 10, 20));
+  // Default conservatively: free plan has 100 req/h, each search burns
+  // 1 (/events) + N (/odds). 5 events = 6 calls/click ≈ 16 searches/hour.
+  const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? 5, 20));
   const events = await fetchEvents(opts.sport);
   const slice = events.slice(0, maxEvents);
 
