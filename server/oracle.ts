@@ -3,11 +3,13 @@
 // it on the "Sinais ao Vivo" page and the robot brain can learn from the
 // outcome (won/lost) over time.
 
-import { addBrainDecision, getDb, resolveDecision } from "./db";
+import { addBrainDecision, getDb, resolveDecision, getUserBalance, addSignalAdvice } from "./db";
 import { robots, userRobots, brainDecisions } from "../drizzle/schema";
 import { and, eq, gte } from "drizzle-orm";
 import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetchScores, type ScoreEvent } from "./oddsData";
 import { isOddsIoConfigured, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
+import { isApiFootballConfigured, analyzeMatch, buildAdvisorPrompt, type AdviseInput } from "./matchAnalysis";
+import { isLLMConfigured, chatComplete } from "./llm";
 import type { ValueBet } from "./oddsAnalysis";
 
 const ORACLE_SLUG = "oracle-ai";
@@ -91,6 +93,47 @@ async function scanOddsIo(): Promise<{ bets: ValueBet[]; source: string }[]> {
   return out;
 }
 
+// Auto-advisor: after a scan creates new signals, run the consultor on the
+// top N by edge so the user opens /signals already finding recommendations.
+// Quota-bounded: 1 LLM + 3 API-Football calls per advised signal.
+const AUTO_ADVISE_TOP_N = 5;
+
+async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBet, source: string, bankroll: number): Promise<boolean> {
+  try {
+    const [home, away] = bet.event.split("×").map((s) => s.trim());
+    if (!home || !away) return false;
+    const analysis = await analyzeMatch(home, away);
+    const input: AdviseInput = {
+      home, away,
+      market: bet.market,
+      outcome: bet.outcome,
+      bestBook: bet.bestBook,
+      bestPrice: bet.bestPrice,
+      avgPrice: bet.avgPrice,
+      edgePct: bet.edgePct,
+      commence: bet.commence,
+    };
+    const prompt = buildAdvisorPrompt(input, analysis, bankroll);
+    const advice = await chatComplete([
+      { role: "system", content: "Você é um consultor de apostas esportivas estatístico, direto e honesto. Nunca prometa ganho garantido. Sempre considere risco de banca. Responda em português, parágrafos curtos." },
+      { role: "user", content: prompt },
+    ]);
+    await addSignalAdvice(userId, {
+      decisionId,
+      home, away,
+      market: bet.market, outcome: bet.outcome,
+      bestBook: bet.bestBook, bestPrice: bet.bestPrice,
+      avgPrice: bet.avgPrice, edgePct: bet.edgePct,
+      commence: bet.commence,
+      prompt, advice, model: "auto",
+    });
+    return true;
+  } catch (e) {
+    console.warn(`[oracle] auto-advise failed for decision ${decisionId} (${source}):`, e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
 export async function runOracleForUser(userId: number): Promise<OracleResult> {
   const oracleId = await getOracleRobotId();
   if (oracleId == null) return { userId, created: 0, sources: [], error: "Oracle robot not in catalog" };
@@ -111,6 +154,7 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
   const ranked = Array.from(seen.values()).sort((a, b) => b.bet.edgePct - a.bet.edgePct).slice(0, MAX_SIGNALS_PER_RUN);
 
   let created = 0;
+  const insertedForAdvise: { decisionId: number; bet: ValueBet; source: string }[] = [];
   for (const { bet, source } of ranked) {
     try {
       const r = await addBrainDecision(userId, oracleId, {
@@ -121,11 +165,29 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
         executedBy: "robot" as const,
         outcome: "pending" as const,
       });
-      if (r.success) created++;
+      if (r.success) {
+        created++;
+        if (r.decisionId != null) insertedForAdvise.push({ decisionId: r.decisionId, bet, source });
+      }
     } catch (e) {
       console.warn("[oracle] addBrainDecision failed:", e instanceof Error ? e.message : e);
     }
   }
+
+  // Auto-orientação: run the consultor on the top N edges if both API-Football
+  // and the LLM are configured. Fire-and-forget so the scan doesn't block on
+  // it; quota is bounded by AUTO_ADVISE_TOP_N (default 5 per user per tick).
+  void (async () => {
+    if (insertedForAdvise.length === 0) return;
+    if (!(await isApiFootballConfigured()) || !(await isLLMConfigured())) return;
+    const bankroll = await getUserBalance(userId);
+    const top = insertedForAdvise.slice(0, AUTO_ADVISE_TOP_N);
+    let advised = 0;
+    for (const { decisionId, bet, source } of top) {
+      if (await autoAdviseSignal(userId, decisionId, bet, source, bankroll)) advised++;
+    }
+    if (advised > 0) console.log(`[oracle] auto-advised ${advised}/${top.length} top signals for user ${userId}`);
+  })();
 
   const sources = Array.from(new Set(ranked.map(r => r.source.split(":")[0])));
   return { userId, created, sources };

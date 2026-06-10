@@ -345,7 +345,7 @@ export async function addBrainDecision(userId: number, robotId: number, data: an
   const brain = await getRobotBrain(userId, robotId);
   if (!brain) return { success: false };
 
-  await db.insert(brainDecisions).values({
+  const inserted = await db.insert(brainDecisions).values({
     brainId: brain.id,
     robotId,
     userId,
@@ -357,6 +357,10 @@ export async function addBrainDecision(userId: number, robotId: number, data: an
     outcome: data.outcome || "pending",
     profitAmount: data.profitAmount ? data.profitAmount.toString() : null,
   });
+  // mysql2 returns [{insertId,...}, ...] for executed queries. Drizzle exposes
+  // it via the first element's insertId so we can wire follow-ups (advisor,
+  // notifications) without an extra round-trip.
+  const decisionId = (inserted as any)?.[0]?.insertId ?? (inserted as any)?.insertId ?? null;
 
   // Update brain stats
   const newTotal = (brain.totalDecisions || 0) + 1;
@@ -367,7 +371,7 @@ export async function addBrainDecision(userId: number, robotId: number, data: an
     lastDecisionAt: new Date(),
   }).where(eq(robotBrain.id, brain.id));
 
-  return { success: true, maturityLevel: newMaturity };
+  return { success: true, maturityLevel: newMaturity, decisionId };
 }
 
 // Resolve a pending decision with outcome and update assertiveness
@@ -981,4 +985,23 @@ export async function getSignalAdviceForDecision(userId: number, decisionId: num
     .where(and(eq(signalAdvice.userId, userId), eq(signalAdvice.decisionId, decisionId)))
     .orderBy(desc(signalAdvice.createdAt))
     .limit(20);
+}
+
+// User balance / bankroll — used by the advisor to convert stake percentages
+// to BRL and by the allocator to size sleeves. Defaults to R$ 10.000 from
+// the schema default; the user can edit it from the advisor card.
+export async function getUserBalance(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 10000;
+  const r = await db.select({ balance: users.balance }).from(users).where(eq(users.id, userId)).limit(1);
+  if (r.length === 0 || !r[0].balance) return 10000;
+  return parseFloat(String(r[0].balance));
+}
+
+export async function setUserBalance(userId: number, balance: number): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) return { success: false };
+  if (!Number.isFinite(balance) || balance < 0) return { success: false };
+  await db.update(users).set({ balance: balance.toString() }).where(eq(users.id, userId));
+  return { success: true };
 }

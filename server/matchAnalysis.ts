@@ -216,6 +216,48 @@ export async function fetchRecentForm(teamId: number, teamName: string, windowsM
 }
 
 // =============================================================================
+// Squad / key players — Fase B
+// =============================================================================
+
+type ApiSquad = { team: { id: number; name: string }; players: { id: number; name: string; age: number | null; number: number | null; position: string | null; photo: string | null }[] };
+
+export type SquadPlayer = { id: number; name: string; age: number | null; number: number | null; position: string };
+export type SquadAnalysis = {
+  teamId: number;
+  attackers: SquadPlayer[];
+  midfielders: SquadPlayer[];
+  defenders: SquadPlayer[];
+  goalkeepers: SquadPlayer[];
+  total: number;
+};
+
+// In-memory cache keyed by teamId for 24h — squads change rarely.
+const squadCache = new Map<number, { value: SquadAnalysis; fetchedAt: number }>();
+const SQUAD_TTL = 24 * 60 * 60 * 1000;
+
+export async function fetchSquad(teamId: number): Promise<SquadAnalysis> {
+  const cached = squadCache.get(teamId);
+  if (cached && Date.now() - cached.fetchedAt < SQUAD_TTL) return cached.value;
+  const data = await call<ApiSquad[]>("/players/squads", { team: teamId });
+  const players = Array.isArray(data) && data[0]?.players ? data[0].players : [];
+  const bucket = (key: string): SquadPlayer[] =>
+    players
+      .filter((p) => (p.position || "").toLowerCase().startsWith(key))
+      .map((p) => ({ id: p.id, name: p.name, age: p.age, number: p.number, position: p.position || "" }))
+      .sort((a, b) => (a.number ?? 99) - (b.number ?? 99));
+  const result: SquadAnalysis = {
+    teamId,
+    attackers: bucket("a"),    // "Attacker"
+    midfielders: bucket("m"),  // "Midfielder"
+    defenders: bucket("d"),    // "Defender"
+    goalkeepers: bucket("g"),  // "Goalkeeper"
+    total: players.length,
+  };
+  squadCache.set(teamId, { value: result, fetchedAt: Date.now() });
+  return result;
+}
+
+// =============================================================================
 // Combined match analysis
 // =============================================================================
 
@@ -226,6 +268,8 @@ export type MatchAnalysis = {
   h2h: H2HAnalysis;
   form1: FormAnalysis;
   form2: FormAnalysis;
+  squad1: SquadAnalysis | null;
+  squad2: SquadAnalysis | null;
   // Goal probability estimates derived from form windows (Poisson-ish heuristic).
   goalProbabilities: {
     team1ScoresPct: number;
@@ -367,10 +411,12 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
   if (!team1) throw new Error(`Time não encontrado: ${homeName}`);
   if (!team2) throw new Error(`Time não encontrado: ${awayName}`);
 
-  const [h2h, form1, form2] = await Promise.all([
+  const [h2h, form1, form2, squad1, squad2] = await Promise.all([
     fetchH2H(team1.id, team2.id),
     fetchRecentForm(team1.id, team1.name),
     fetchRecentForm(team2.id, team2.name),
+    fetchSquad(team1.id).catch(() => null),
+    fetchSquad(team2.id).catch(() => null),
   ]);
 
   const goalProbabilities = computeGoalProbabilities(form1, form2);
@@ -378,7 +424,7 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
 
   const result: MatchAnalysis = {
     generatedAt: new Date().toISOString(),
-    team1, team2, h2h, form1, form2, goalProbabilities, prediction,
+    team1, team2, h2h, form1, form2, squad1, squad2, goalProbabilities, prediction,
   };
   analysisCache.set(key, { value: result, fetchedAt: Date.now() });
   return result;
@@ -401,7 +447,7 @@ export type AdviseInput = {
   commence?: string;
 };
 
-export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis): string {
+export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis, bankrollBrl = 5000): string {
   const w1 = a.form1.windows.find((w) => w.games >= 5) ?? a.form1.windows[0];
   const w2 = a.form2.windows.find((w) => w.games >= 5) ?? a.form2.windows[0];
   const gp = a.goalProbabilities;
@@ -433,10 +479,12 @@ export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis): string
     `- ${h2hLine}`,
     `- ${formLine(a.team1.name, w1)}`,
     `- ${formLine(a.team2.name, w2)}`,
+    a.squad1 && a.squad1.attackers.length > 0 ? `- Atacantes ${a.team1.name}: ${a.squad1.attackers.slice(0, 4).map((p) => p.name).join(", ")}.` : "",
+    a.squad2 && a.squad2.attackers.length > 0 ? `- Atacantes ${a.team2.name}: ${a.squad2.attackers.slice(0, 4).map((p) => p.name).join(", ")}.` : "",
     `- Predição interna: ${a.team1.name} ${p.team1WinPct}% / Empate ${p.drawPct}% / ${a.team2.name} ${p.team2WinPct}%. Placar provável ${p.probableScore}. Confiança ${p.confidence}.`,
     `- Probabilidade de gols: ambas marcam ${gp.bothScorePct.toFixed(0)}%, over 2.5 ${gp.over25Pct.toFixed(0)}%, total esperado ${gp.expectedTotal.toFixed(2)} gols.`,
     "",
-    `Bankroll de referência: R$ 5.000 (use isso pra converter % em valor de aposta).`,
+    `Bankroll do usuário: R$ ${bankrollBrl.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (use isso pra converter % em valor de aposta).`,
     "",
     "Responda EXATAMENTE neste formato, sem markdown, sem asteriscos, sem títulos extras, uma linha por campo. Os 6 campos são obrigatórios e devem começar exatamente com a palavra-chave em maiúsculas seguida de dois-pontos:",
     "",

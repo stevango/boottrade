@@ -86,6 +86,14 @@ export default function Signals() {
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
 
   const all: Signal[] = (data as unknown as Signal[]) ?? [];
+  // Fetch all advice the user has — we use it to badge signals that already
+  // have an auto-generated recommendation waiting.
+  const allAdvice = trpc.matchAnalysis.adviceHistory.useQuery({ limit: 200 });
+  const advisedSet = new Set<number>(
+    (allAdvice.data ?? [])
+      .map((r: any) => r.decisionId)
+      .filter((id: number | null): id is number => typeof id === "number"),
+  );
   const robotOptions = Array.from(new Set(all.map((s) => s.robotName).filter((n): n is string => !!n))).sort();
   const marketOptions = Array.from(new Set(all.map((s) => {
     const m = s.asset.split("|")[1]?.trim();
@@ -204,7 +212,7 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-warning" /> Pendentes ({pending.length})
             </h2>
-            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
+            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} hasAdvice={advisedSet.has(s.id)} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
         )}
 
@@ -213,7 +221,7 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-muted-foreground" /> Histórico ({past.length})
             </h2>
-            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} onMark={() => {}} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
+            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} hasAdvice={advisedSet.has(s.id)} onMark={() => {}} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
         )}
       </div>
@@ -352,6 +360,17 @@ function MatchAnalysisPanel({ mut, ctx }: { mut: any; ctx: { home: string; away:
         <FormCard form={a.form2} />
       </div>
 
+      {/* Plantel — Fase B */}
+      {(a.squad1 || a.squad2) && (
+        <div>
+          <p className="text-sm font-medium text-foreground mb-2">Plantel — atacantes</p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {a.squad1 && <SquadCard team={a.team1.name} squad={a.squad1} />}
+            {a.squad2 && <SquadCard team={a.team2.name} squad={a.squad2} />}
+          </div>
+        </div>
+      )}
+
       {/* Probabilidade de gols */}
       <div>
         <p className="text-sm font-medium text-foreground mb-2">Probabilidade de gols</p>
@@ -470,6 +489,12 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
     { decisionId: ctx.decisionId, limit: 5 },
     { enabled: ctx.decisionId != null },
   );
+  const balanceQuery = trpc.user.getBalance.useQuery();
+  const setBalance = trpc.user.setBalance.useMutation({
+    onSuccess: () => { toast.success("Banca atualizada."); utils.user.getBalance.invalidate(); setEditingBalance(false); },
+  });
+  const [editingBalance, setEditingBalance] = useState(false);
+  const [balanceInput, setBalanceInput] = useState("");
   const [showHistory, setShowHistory] = useState(false);
 
   const run = () => {
@@ -529,6 +554,33 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
           se vale, tamanho de aposta (% banca), risco, mercado alternativo e veredito final. Toda recomendação fica salva.
         </p>
       )}
+
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-border text-[11px]">
+        <span className="text-muted-foreground">Banca de referência (usada pra calcular o stake em R$):</span>
+        {editingBalance ? (
+          <div className="flex items-center gap-1">
+            <Input
+              type="number" min="0" step="100" value={balanceInput}
+              onChange={(e) => setBalanceInput(e.target.value)}
+              autoFocus
+              className="h-6 w-24 text-[11px] bg-secondary border-border"
+            />
+            <Button size="sm" className="h-6 px-2 text-[11px] bg-primary text-primary-foreground"
+              onClick={() => setBalance.mutate({ balance: parseFloat(balanceInput) || 0 })}
+              disabled={setBalance.isPending}>
+              Salvar
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={() => setEditingBalance(false)}>Cancelar</Button>
+          </div>
+        ) : (
+          <button
+            className="text-primary hover:underline font-medium"
+            onClick={() => { setBalanceInput(String(balanceQuery.data?.balance ?? 5000)); setEditingBalance(true); }}
+          >
+            R$ {(balanceQuery.data?.balance ?? 5000).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} · editar
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -547,6 +599,33 @@ function Stat({ label, v }: { label: string; v: string }) {
     <div className="p-2 rounded bg-secondary text-center">
       <p className="text-[10px] text-muted-foreground truncate">{label}</p>
       <p className="text-sm font-medium text-foreground">{v}</p>
+    </div>
+  );
+}
+
+function SquadCard({ team, squad }: { team: string; squad: any }) {
+  const attackers = squad.attackers ?? [];
+  const midfielders = squad.midfielders ?? [];
+  return (
+    <div className="p-3 rounded-lg bg-secondary/30 border border-border">
+      <p className="text-sm font-medium text-foreground mb-2">{team}</p>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Atacantes ({attackers.length})</p>
+      <div className="space-y-0.5 mb-2">
+        {attackers.slice(0, 6).map((p: any) => (
+          <p key={p.id} className="text-[11px] text-foreground">
+            {p.number != null && <span className="text-muted-foreground">#{p.number} </span>}
+            {p.name}
+            {p.age != null && <span className="text-muted-foreground"> · {p.age}a</span>}
+          </p>
+        ))}
+        {attackers.length === 0 && <p className="text-[10px] text-muted-foreground italic">Sem dados de atacantes.</p>}
+      </div>
+      {midfielders.length > 0 && (
+        <>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Meio-campo ({midfielders.length})</p>
+          <p className="text-[11px] text-foreground">{midfielders.slice(0, 5).map((p: any) => p.name).join(", ")}{midfielders.length > 5 ? "…" : ""}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -606,7 +685,7 @@ function parseReasoning(reasoning: string | null): { bestPrice?: number; bestBoo
   return out;
 }
 
-function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" | "loss" | "neutral") => void; onAnalyze: (ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number }) => void }) {
+function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?: boolean; onMark: (o: "profit" | "loss" | "neutral") => void; onAnalyze: (ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number }) => void }) {
   const conf = parseFloat(s.confidence || "0");
   const isPending = s.outcome === "pending";
   const teams = parseAssetTeams(s.asset);
@@ -619,6 +698,11 @@ function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" |
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <Badge variant="outline" className="bg-profit/10 text-profit border-profit/30 text-[10px]">+{conf.toFixed(1)}%</Badge>
             <Badge variant="outline" className={`text-[10px] ${outcomeColor[s.outcome]}`}>{outcomeLabel[s.outcome]}</Badge>
+            {hasAdvice && (
+              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]" title="O consultor IA já gerou uma recomendação automática pra este sinal — clique em Analisar partida pra ver">
+                <Sparkles className="w-2.5 h-2.5 mr-1" /> orientado
+              </Badge>
+            )}
             <span className="text-[10px] text-muted-foreground">
               {s.robotName ?? "Robô"} · {new Date(s.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </span>

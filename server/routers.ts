@@ -20,6 +20,7 @@ import {
   updateFinancialGoal, deleteFinancialGoal, getAiConversation, saveAiConversation,
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   addSignalAdvice, getSignalAdviceHistory, getSignalAdviceForDecision,
+  getUserBalance, setUserBalance,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
@@ -137,6 +138,13 @@ export const appRouter = router({
       }),
   }),
 
+  user: router({
+    getBalance: protectedProcedure.query(async ({ ctx }) => ({ balance: await getUserBalance(ctx.user.id) })),
+    setBalance: protectedProcedure
+      .input(z.object({ balance: z.number().min(0).max(100_000_000) }))
+      .mutation(async ({ ctx, input }) => setUserBalance(ctx.user.id, input.balance)),
+  }),
+
   matchAnalysis: router({
     configured: protectedProcedure.query(async () => ({ configured: await isApiFootballConfigured() })),
     test: protectedProcedure.mutation(async () => testApiFootballConnection()),
@@ -170,8 +178,11 @@ export const appRouter = router({
         if (!(await isLLMConfigured())) return { configured: false as const, advice: null, error: "Consultor IA não configurado. Adicione OPENAI_API_KEY em /integrations." };
         if (!(await isApiFootballConfigured())) return { configured: false as const, advice: null, error: "API-Football não configurada — sem estatística pra alimentar o consultor." };
         try {
-          const analysis = await analyzeMatch(input.home, input.away);
-          const prompt = buildAdvisorPrompt(input as AdviseInput, analysis);
+          const [analysis, bankroll] = await Promise.all([
+            analyzeMatch(input.home, input.away),
+            getUserBalance(ctx.user.id),
+          ]);
+          const prompt = buildAdvisorPrompt(input as AdviseInput, analysis, bankroll);
           const advice = await chatComplete([
             { role: "system", content: "Você é um consultor de apostas esportivas estatístico, direto e honesto. Nunca prometa ganho garantido. Sempre considere risco de banca. Responda em português, parágrafos curtos e bullets quando ajudar." },
             { role: "user", content: prompt },
