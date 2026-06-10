@@ -138,7 +138,10 @@ export type H2HAnalysis = {
 };
 
 export async function fetchH2H(team1Id: number, team2Id: number): Promise<H2HAnalysis> {
-  const fixtures = await call<ApiFixture[]>("/fixtures/headtohead", { h2h: `${team1Id}-${team2Id}`, last: 20 });
+  // Free plan rejects ?last=N. Without it the API returns the H2H history
+  // sorted by date desc; we cap to 20 client-side.
+  const all = await call<ApiFixture[]>("/fixtures/headtohead", { h2h: `${team1Id}-${team2Id}` });
+  const fixtures = (Array.isArray(all) ? all : []).slice(0, 20);
   let team1Wins = 0, team2Wins = 0, draws = 0, goalsFor1 = 0, goalsFor2 = 0;
   const recent: H2HAnalysis["recent"] = [];
   const resultCounts = new Map<string, number>();
@@ -202,12 +205,34 @@ export type FormAnalysis = {
   lastResults: { date: string; opponent: string; venue: "home" | "away" | "neutral"; goalsFor: number; goalsAgainst: number; result: "W" | "D" | "L" }[];
 };
 
-// API-Football's /fixtures supports ?team=X&last=N for the most recent N
-// matches of any status. We pull last 40 and bucket them locally into the
-// requested time windows; that minimizes quota usage to 1 request per team.
+// API-Football's /fixtures supports ?team=X but the free plan rejects ?last=N.
+// We instead pull by season — current year + previous — and bucket the
+// fixtures locally into the requested time windows. National teams sometimes
+// have sparse calendars so two seasons usually give enough sample to fill
+// at least the 12 and 24 month windows.
 export async function fetchRecentForm(teamId: number, teamName: string, windowsMonths = [12, 24, 36, 48, 60]): Promise<FormAnalysis> {
-  const fixtures = await call<ApiFixture[]>("/fixtures", { team: teamId, last: 60 });
-  const finished = fixtures.filter((f) => ["FT", "AET", "PEN"].includes(f.fixture.status.short));
+  const currentYear = new Date().getUTCFullYear();
+  const seasons = [currentYear, currentYear - 1];
+  const fetched: ApiFixture[] = [];
+  for (const season of seasons) {
+    try {
+      const part = await call<ApiFixture[]>("/fixtures", { team: teamId, season });
+      if (Array.isArray(part)) fetched.push(...part);
+    } catch (e) {
+      // One season failing (e.g. no fixtures yet) shouldn't kill the whole form analysis.
+      console.warn(`[matchAnalysis] /fixtures season=${season} team=${teamId} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  // Dedupe by fixture.id since the same match can appear if it sits on the
+  // calendar boundary between seasons.
+  const seen = new Set<number>();
+  const unique = fetched.filter((f) => {
+    if (seen.has(f.fixture.id)) return false;
+    seen.add(f.fixture.id);
+    return true;
+  });
+  const finished = unique.filter((f) => ["FT", "AET", "PEN"].includes(f.fixture.status.short))
+    .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date));
   const now = Date.now();
 
   const lastResults = finished.slice(0, 10).map((f) => {
@@ -221,7 +246,7 @@ export async function fetchRecentForm(teamId: number, teamName: string, windowsM
 
   const windows: FormWindow[] = windowsMonths.map((months) => {
     const cutoff = now - months * 30 * 24 * 60 * 60 * 1000;
-    const inWindow = finished.filter((f) => Date.parse(f.fixture.date) >= cutoff);
+    const inWindow = unique.filter((f) => ["FT", "AET", "PEN"].includes(f.fixture.status.short) && Date.parse(f.fixture.date) >= cutoff);
     let wins = 0, draws = 0, losses = 0, goalsFor = 0, goalsAgainst = 0;
     for (const f of inWindow) {
       const isHome = f.teams.home.id === teamId;
