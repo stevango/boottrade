@@ -29,6 +29,13 @@
       "when": 1780852251363,
       "tag": "0003_equal_wrecking_crew",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1781109958012,
+      "tag": "0004_fast_mojo",
+      "breakpoints": true
     }
   ]
 }

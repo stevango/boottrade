@@ -383,3 +383,66 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
   analysisCache.set(key, { value: result, fetchedAt: Date.now() });
   return result;
 }
+
+// =============================================================================
+// AI advisor — builds a structured prompt from the analysis + signal context
+// and calls the configured LLM. Output is short, honest, and Portuguese.
+// =============================================================================
+
+export type AdviseInput = {
+  home: string;
+  away: string;
+  market: string;
+  outcome: string;
+  bestBook?: string;
+  bestPrice?: number;
+  avgPrice?: number;
+  edgePct?: number;
+  commence?: string;
+};
+
+export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis): string {
+  const w1 = a.form1.windows.find((w) => w.games >= 5) ?? a.form1.windows[0];
+  const w2 = a.form2.windows.find((w) => w.games >= 5) ?? a.form2.windows[0];
+  const gp = a.goalProbabilities;
+  const p = a.prediction;
+  const odds = input.bestPrice
+    ? `Melhor odd: ${input.bestPrice.toFixed(2)} @ ${input.bestBook ?? "?"} (média do mercado ${input.avgPrice?.toFixed(2) ?? "?"}; edge ${input.edgePct?.toFixed(1) ?? "?"}%).`
+    : "Sem dados de odds neste sinal.";
+  const dateLine = input.commence ? `Data: ${new Date(input.commence).toLocaleString("pt-BR")}.` : "";
+
+  const h2hLine = a.h2h.totalGames > 0
+    ? `H2H: ${a.h2h.totalGames} jogos, ${a.h2h.team1Wins} vit. ${a.team1.name} / ${a.h2h.draws} empates / ${a.h2h.team2Wins} vit. ${a.team2.name}. Média ${a.h2h.avgGoals.toFixed(2)} gols/jogo. Placar mais comum: ${a.h2h.mostCommonResult}.`
+    : "H2H: sem confrontos registrados na base.";
+
+  const formLine = (name: string, w: typeof w1) =>
+    w.games >= 5
+      ? `${name} (últimos ${w.months}m): ${w.games}j, aproveitamento ${w.pointsRate.toFixed(0)}%, ${w.avgGF.toFixed(2)} gols feitos/j, ${w.avgGA.toFixed(2)} sofridos/j.`
+      : `${name}: amostra insuficiente nos últimos meses (${w.games} jogos).`;
+
+  return [
+    `Partida: ${a.team1.name} × ${a.team2.name}.`,
+    dateLine,
+    "",
+    `Sinal do robô:`,
+    `- Mercado: ${input.market}`,
+    `- Resultado apostado: ${input.outcome}`,
+    `- ${odds}`,
+    "",
+    `Estatística:`,
+    `- ${h2hLine}`,
+    `- ${formLine(a.team1.name, w1)}`,
+    `- ${formLine(a.team2.name, w2)}`,
+    `- Predição interna: ${a.team1.name} ${p.team1WinPct}% / Empate ${p.drawPct}% / ${a.team2.name} ${p.team2WinPct}%. Placar provável ${p.probableScore}. Confiança ${p.confidence}.`,
+    `- Probabilidade de gols: ambas marcam ${gp.bothScorePct.toFixed(0)}%, over 2.5 ${gp.over25Pct.toFixed(0)}%, total esperado ${gp.expectedTotal.toFixed(2)} gols.`,
+    "",
+    "Sua tarefa: dar uma orientação prática e curta sobre essa aposta, em português, máximo 200 palavras, dividida em:",
+    "1) Vale a aposta? (sim / não / depende — uma frase com a razão estatística principal)",
+    "2) Tamanho sugerido em % do bankroll (use Kelly fracionário 1/4 se o sinal tem edge bom e amostra decente; flat 1-2% se a confiança for baixa).",
+    "3) Risco principal (uma frase).",
+    "4) Mercado alternativo mais seguro, se a estatística apontar um (ex: Dupla Chance, Over/Under, BTTS).",
+    "5) Veredito final (sim/não/cauteloso).",
+    "",
+    "Importante: nunca prometa ganho garantido. Se a amostra histórica for pequena (< 5 jogos no período), avise explicitamente. Se o edge for muito alto (> 20%), levante a hipótese de erro de odd ou diferença de definição de mercado entre casas.",
+  ].filter(Boolean).join("\n");
+}

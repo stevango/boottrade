@@ -313,6 +313,32 @@ export const appSettings = mysqlTable("app_settings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+// AI advisor recommendations history. One row per advice request, scoped to
+// the user. Links optionally to a brain_decisions row when the advice was
+// requested from the /signals view, so we can later cross-reference the
+// recommendation with the actual outcome.
+export const signalAdvice = mysqlTable("signal_advice", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  decisionId: int("decisionId"),
+  home: varchar("home", { length: 100 }).notNull(),
+  away: varchar("away", { length: 100 }).notNull(),
+  market: varchar("market", { length: 60 }).notNull(),
+  outcome: varchar("outcome", { length: 100 }).notNull(),
+  bestBook: varchar("bestBook", { length: 100 }),
+  bestPrice: decimal("bestPrice", { precision: 8, scale: 3 }),
+  avgPrice: decimal("avgPrice", { precision: 8, scale: 3 }),
+  edgePct: decimal("edgePct", { precision: 6, scale: 2 }),
+  commence: timestamp("commence"),
+  prompt: text("prompt").notNull(),
+  advice: text("advice").notNull(),
+  model: varchar("model", { length: 80 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  userIdx: index("signal_advice_userId_createdAt_idx").on(t.userId, t.createdAt),
+  decisionIdx: index("signal_advice_decisionId_idx").on(t.decisionId),
+}));
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Robot = typeof robots.$inferSelect;
@@ -328,3 +354,4 @@ export type PortfolioAsset = typeof portfolioAssets.$inferSelect;
 export type FinancialGoal = typeof financialGoals.$inferSelect;
 export type AiConversation = typeof aiConversations.$inferSelect;
 export type DailyPnl = typeof dailyPnl.$inferSelect;
+export type SignalAdvice = typeof signalAdvice.$inferSelect;

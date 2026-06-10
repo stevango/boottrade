@@ -4,7 +4,8 @@ import {
   InsertUser, users, robots, trades, backtests, riskSettings,
   marketplaceListings, socialPosts, copyTrades, userRobots,
   robotBrain, brainDecisions, portfolioAssets, financialGoals,
-  aiConversations, dailyPnl, brokerConnections, watchlist, appSettings
+  aiConversations, dailyPnl, brokerConnections, watchlist, appSettings,
+  signalAdvice
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';
@@ -935,4 +936,49 @@ export async function resetPaperTrades(userId: number) {
   if (!db) return { success: false };
   await db.delete(trades).where(and(eq(trades.userId, userId), eq(trades.isPaperTrade, true)));
   return { success: true };
+}
+
+// AI advisor history
+export async function addSignalAdvice(userId: number, data: {
+  decisionId?: number; home: string; away: string; market: string; outcome: string;
+  bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number;
+  commence?: string; prompt: string; advice: string; model?: string;
+}) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.insert(signalAdvice).values({
+    userId,
+    decisionId: data.decisionId ?? null,
+    home: data.home,
+    away: data.away,
+    market: data.market,
+    outcome: data.outcome,
+    bestBook: data.bestBook ?? null,
+    bestPrice: data.bestPrice != null ? data.bestPrice.toString() : null,
+    avgPrice: data.avgPrice != null ? data.avgPrice.toString() : null,
+    edgePct: data.edgePct != null ? data.edgePct.toString() : null,
+    commence: data.commence ? new Date(data.commence) : null,
+    prompt: data.prompt,
+    advice: data.advice,
+    model: data.model ?? null,
+  });
+  return { success: true };
+}
+
+export async function getSignalAdviceHistory(userId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(signalAdvice)
+    .where(eq(signalAdvice.userId, userId))
+    .orderBy(desc(signalAdvice.createdAt))
+    .limit(limit);
+}
+
+export async function getSignalAdviceForDecision(userId: number, decisionId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(signalAdvice)
+    .where(and(eq(signalAdvice.userId, userId), eq(signalAdvice.decisionId, decisionId)))
+    .orderBy(desc(signalAdvice.createdAt))
+    .limit(20);
 }

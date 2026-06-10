@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter, BarChart2 } from "lucide-react";
+import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter, BarChart2, Sparkles, History } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -69,7 +69,8 @@ export default function Signals() {
 
   const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral" } | null>(null);
   const [profit, setProfit] = useState<string>("");
-  const [analyzing, setAnalyzing] = useState<{ home: string; away: string } | null>(null);
+  type AnalyzeCtx = { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number };
+  const [analyzing, setAnalyzing] = useState<AnalyzeCtx | null>(null);
   const analyzeMut = trpc.matchAnalysis.analyze.useMutation();
 
   const submitMarking = () => {
@@ -203,7 +204,7 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-warning" /> Pendentes ({pending.length})
             </h2>
-            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(home, away) => { setAnalyzing({ home, away }); analyzeMut.mutate({ home, away }); }} />)}</div>
+            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
         )}
 
@@ -212,7 +213,7 @@ export default function Signals() {
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-muted-foreground" /> Histórico ({past.length})
             </h2>
-            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} onMark={() => {}} onAnalyze={(home, away) => { setAnalyzing({ home, away }); analyzeMut.mutate({ home, away }); }} />)}</div>
+            <div className="space-y-2">{past.map((s) => <SignalRow key={s.id} s={s} onMark={() => {}} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
         )}
       </div>
@@ -226,7 +227,7 @@ export default function Signals() {
             </DialogTitle>
           </DialogHeader>
           <div className="mt-2">
-            <MatchAnalysisPanel mut={analyzeMut} />
+            <MatchAnalysisPanel mut={analyzeMut} ctx={analyzing} />
           </div>
         </DialogContent>
       </Dialog>
@@ -267,7 +268,7 @@ export default function Signals() {
   );
 }
 
-function MatchAnalysisPanel({ mut }: { mut: any }) {
+function MatchAnalysisPanel({ mut, ctx }: { mut: any; ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number } | null }) {
   if (mut.isPending) {
     return <div className="flex items-center justify-center py-10 gap-2 text-muted-foreground text-sm">
       <Loader2 className="w-4 h-4 animate-spin" /> Buscando estatísticas (H2H + forma recente + predição)...
@@ -366,10 +367,87 @@ function MatchAnalysisPanel({ mut }: { mut: any }) {
         </div>
       </div>
 
+      {ctx && <AdvisorSection ctx={ctx} />}
+
       <p className="text-[10px] text-muted-foreground text-center mt-2 italic">
         Análise estatística baseada em dados históricos e momento das seleções. Não é garantia de resultado.
         Gerada em {new Date(a.generatedAt).toLocaleString("pt-BR")}.
       </p>
+    </div>
+  );
+}
+
+function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number } }) {
+  const adviseMut = trpc.matchAnalysis.advise.useMutation();
+  const utils = trpc.useUtils();
+  const history = trpc.matchAnalysis.adviceHistory.useQuery(
+    { decisionId: ctx.decisionId, limit: 5 },
+    { enabled: ctx.decisionId != null },
+  );
+  const [showHistory, setShowHistory] = useState(false);
+
+  const run = () => {
+    adviseMut.mutate({
+      home: ctx.home, away: ctx.away,
+      market: ctx.market, outcome: ctx.outcome,
+      bestBook: ctx.bestBook, bestPrice: ctx.bestPrice,
+      avgPrice: ctx.avgPrice, edgePct: ctx.edgePct,
+      commence: ctx.commence, decisionId: ctx.decisionId,
+    }, { onSuccess: () => utils.matchAnalysis.adviceHistory.invalidate() });
+  };
+
+  const r = adviseMut.data;
+  const past = history.data ?? [];
+
+  return (
+    <div className="p-3 rounded-lg bg-secondary/40 border border-primary/20 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-sm font-medium text-foreground flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-primary" /> Consultor IA
+        </p>
+        <div className="flex items-center gap-1">
+          {past.length > 0 && (
+            <Button size="sm" variant="ghost" className="text-[11px] text-muted-foreground" onClick={() => setShowHistory((v) => !v)}>
+              <History className="w-3 h-3 mr-1" /> Histórico ({past.length})
+            </Button>
+          )}
+          <Button size="sm" onClick={run} disabled={adviseMut.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            {adviseMut.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Pensando...</> : <><Sparkles className="w-3 h-3 mr-1" /> Pedir orientação</>}
+          </Button>
+        </div>
+      </div>
+
+      {r?.configured === false && (
+        <div className="p-2 rounded bg-warning/5 border border-warning/20 text-[11px] text-muted-foreground">{r.error}</div>
+      )}
+      {r?.error && r?.configured !== false && (
+        <p className="text-[11px] text-loss">{r.error}</p>
+      )}
+      {r?.advice && (
+        <div className="p-3 rounded bg-card border border-border">
+          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{r.advice}</p>
+          <p className="text-[10px] text-muted-foreground mt-2">Recomendação salva no histórico.</p>
+        </div>
+      )}
+
+      {showHistory && past.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-border">
+          <p className="text-[11px] text-muted-foreground">Recomendações anteriores para este sinal:</p>
+          {past.map((p: any) => (
+            <div key={p.id} className="p-2 rounded bg-card border border-border">
+              <p className="text-[10px] text-muted-foreground mb-1">{new Date(p.createdAt).toLocaleString("pt-BR")}</p>
+              <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{p.advice}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!r && past.length === 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          O consultor analisa o sinal junto com a estatística (H2H, forma, probabilidades) e devolve uma recomendação prática:
+          se vale, tamanho de aposta (% banca), risco, mercado alternativo e veredito final. Toda recomendação fica salva.
+        </p>
+      )}
     </div>
   );
 }
@@ -421,15 +499,38 @@ function FormCard({ form }: { form: any }) {
   );
 }
 
-function parseAssetTeams(asset: string): { home: string; away: string } | null {
-  const m = /^(.+?)\s*×\s*(.+?)\s*\|/.exec(asset);
-  return m ? { home: m[1].trim(), away: m[2].trim() } : null;
+function parseAssetTeams(asset: string): { home: string; away: string; market: string; outcome: string } | null {
+  const m = /^(.+?)\s*×\s*(.+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)$/.exec(asset);
+  if (!m) return null;
+  return { home: m[1].trim(), away: m[2].trim(), market: m[3].trim(), outcome: m[4].trim() };
 }
 
-function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" | "loss" | "neutral") => void; onAnalyze: (home: string, away: string) => void }) {
+// Reasoning shape: "[source] 14.00 @ BetOnline.ag vs média 6.08 entre 34 casas (edge 27.7%) em 15/06/2026, 16:00:00."
+function parseReasoning(reasoning: string | null): { bestPrice?: number; bestBook?: string; avgPrice?: number; commence?: string } {
+  if (!reasoning) return {};
+  const m = /(\d+(?:\.\d+)?)\s*@\s*([^v]+?)\s+vs\s+média\s+(\d+(?:\.\d+)?)/.exec(reasoning);
+  const t = /em\s+(\d{2}\/\d{2}\/\d{4},?\s*\d{2}:\d{2}(?::\d{2})?)/.exec(reasoning);
+  const out: { bestPrice?: number; bestBook?: string; avgPrice?: number; commence?: string } = {};
+  if (m) {
+    out.bestPrice = parseFloat(m[1]);
+    out.bestBook = m[2].trim();
+    out.avgPrice = parseFloat(m[3]);
+  }
+  if (t) {
+    // "15/06/2026, 16:00:00" → ISO
+    const [d, hms] = t[1].split(",").map((s) => s.trim());
+    const [dd, mm, yy] = d.split("/");
+    out.commence = `${yy}-${mm}-${dd}T${hms || "00:00:00"}Z`;
+  }
+  return out;
+}
+
+function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" | "loss" | "neutral") => void; onAnalyze: (ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number }) => void }) {
   const conf = parseFloat(s.confidence || "0");
   const isPending = s.outcome === "pending";
   const teams = parseAssetTeams(s.asset);
+  const r = parseReasoning(s.reasoning);
+  const ctx = teams ? { home: teams.home, away: teams.away, market: teams.market, outcome: teams.outcome, edgePct: conf, decisionId: s.id, ...r } : null;
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
@@ -458,8 +559,8 @@ function SignalRow({ s, onMark, onAnalyze }: { s: Signal; onMark: (o: "profit" |
               </Button>
             </div>
           )}
-          {teams && (
-            <Button size="sm" variant="ghost" className="text-[11px] text-primary hover:bg-primary/10" onClick={() => onAnalyze(teams.home, teams.away)}>
+          {ctx && (
+            <Button size="sm" variant="ghost" className="text-[11px] text-primary hover:bg-primary/10" onClick={() => onAnalyze(ctx)}>
               <BarChart2 className="w-3 h-3 mr-1" /> Analisar partida
             </Button>
           )}

@@ -19,6 +19,7 @@ import {
   updatePortfolioAsset, deletePortfolioAsset, addFinancialGoal,
   updateFinancialGoal, deleteFinancialGoal, getAiConversation, saveAiConversation,
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
+  addSignalAdvice, getSignalAdviceHistory, getSignalAdviceForDecision,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
@@ -35,7 +36,7 @@ import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } f
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
-import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch } from "./matchAnalysis";
+import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch, buildAdvisorPrompt, type AdviseInput } from "./matchAnalysis";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -151,6 +152,49 @@ export const appRouter = router({
         } catch (error) {
           return { configured: true as const, analysis: null, error: String(error).slice(0, 250) };
         }
+      }),
+    advise: protectedProcedure
+      .input(z.object({
+        home: z.string().trim().min(1).max(100),
+        away: z.string().trim().min(1).max(100),
+        market: z.string().trim().min(1).max(60),
+        outcome: z.string().trim().min(1).max(100),
+        bestBook: z.string().trim().max(100).optional(),
+        bestPrice: z.number().optional(),
+        avgPrice: z.number().optional(),
+        edgePct: z.number().optional(),
+        commence: z.string().optional(),
+        decisionId: z.number().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!(await isLLMConfigured())) return { configured: false as const, advice: null, error: "Consultor IA não configurado. Adicione OPENAI_API_KEY em /integrations." };
+        if (!(await isApiFootballConfigured())) return { configured: false as const, advice: null, error: "API-Football não configurada — sem estatística pra alimentar o consultor." };
+        try {
+          const analysis = await analyzeMatch(input.home, input.away);
+          const prompt = buildAdvisorPrompt(input as AdviseInput, analysis);
+          const advice = await chatComplete([
+            { role: "system", content: "Você é um consultor de apostas esportivas estatístico, direto e honesto. Nunca prometa ganho garantido. Sempre considere risco de banca. Responda em português, parágrafos curtos e bullets quando ajudar." },
+            { role: "user", content: prompt },
+          ]);
+          await addSignalAdvice(ctx.user.id, {
+            decisionId: input.decisionId,
+            home: input.home, away: input.away,
+            market: input.market, outcome: input.outcome,
+            bestBook: input.bestBook, bestPrice: input.bestPrice,
+            avgPrice: input.avgPrice, edgePct: input.edgePct,
+            commence: input.commence,
+            prompt, advice,
+          });
+          return { configured: true as const, advice, error: null };
+        } catch (error) {
+          return { configured: true as const, advice: null, error: String(error).slice(0, 300) };
+        }
+      }),
+    adviceHistory: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional(), decisionId: z.number().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        if (input?.decisionId != null) return getSignalAdviceForDecision(ctx.user.id, input.decisionId);
+        return getSignalAdviceHistory(ctx.user.id, input?.limit ?? 50);
       }),
   }),
 
