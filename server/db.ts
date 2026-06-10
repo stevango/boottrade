@@ -395,22 +395,20 @@ export async function findPendingDecisionByAsset(userId: number, robotId: number
 }
 
 // Bulk-expire stale pending decisions: marks anything that's still pending
-// after maxAgeDays as neutral with a synthetic reasoning note. Called by the
-// "Limpar vencidos" UI action and also periodically by the scheduler to
-// keep the pending count from growing unbounded.
+// after maxAgeDays as neutral with a synthetic reasoning note. maxAgeDays=0
+// means "all currently pending". Called by the "Limpar vencidos" and "Não
+// apostei em nada" UI actions and also periodically by the scheduler.
 export async function expireStalePendingDecisions(userId: number, robotId: number | null, maxAgeDays = 7): Promise<{ expired: number }> {
   const db = await getDb();
   if (!db) return { expired: 0 };
-  const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
   const filters = [
     eq(brainDecisions.userId, userId),
     eq(brainDecisions.outcome, "pending"),
   ];
   if (robotId != null) filters.push(eq(brainDecisions.robotId, robotId));
-  // We can't filter by createdAt < cutoff in the same query as the outcome
-  // change in a portable way with drizzle/mysql, so do a select then update.
   const rows = await db.select({ id: brainDecisions.id, createdAt: brainDecisions.createdAt }).from(brainDecisions).where(and(...filters));
-  const oldIds = rows.filter((r) => r.createdAt && new Date(r.createdAt).getTime() < cutoff.getTime()).map((r) => r.id);
+  const cutoff = maxAgeDays > 0 ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000 : Date.now() + 24 * 60 * 60 * 1000;
+  const oldIds = rows.filter((r) => r.createdAt && (maxAgeDays === 0 || new Date(r.createdAt).getTime() < cutoff)).map((r) => r.id);
   if (oldIds.length === 0) return { expired: 0 };
   for (const id of oldIds) {
     await db.update(brainDecisions).set({ outcome: "neutral", profitAmount: "0" }).where(eq(brainDecisions.id, id));

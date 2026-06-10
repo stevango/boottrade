@@ -267,7 +267,7 @@ export const appRouter = router({
       return tryResolveOracleSignals(ctx.user.id);
     }),
     expireStale: protectedProcedure
-      .input(z.object({ maxAgeDays: z.number().min(1).max(60).optional() }).optional())
+      .input(z.object({ maxAgeDays: z.number().min(0).max(60).optional() }).optional())
       .mutation(async ({ ctx, input }) => {
         return expireStalePendingDecisions(ctx.user.id, null, input?.maxAgeDays ?? 2);
       }),

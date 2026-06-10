@@ -34,10 +34,10 @@ const outcomeColor: Record<string, string> = {
   neutral: "bg-secondary text-muted-foreground border-border",
 };
 const outcomeLabel: Record<string, string> = {
-  pending: "Pendente",
-  profit: "Ganhou",
-  loss: "Perdeu",
-  neutral: "Anulado",
+  pending: "Sugestão pendente",
+  profit: "Apostei • Ganhei",
+  loss: "Apostei • Perdi",
+  neutral: "Não apostei",
 };
 
 export default function Signals() {
@@ -133,10 +133,12 @@ export default function Signals() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
-              <Zap className="w-7 h-7 text-primary" /> Sinais ao Vivo
+              <Zap className="w-7 h-7 text-primary" /> Sugestões de Apostas (Sinais)
             </h1>
             <p className="text-muted-foreground text-sm">
-              Sinais gerados pelos robôs ativos. Marque o resultado depois pra o cérebro aprender.
+              Os robôs geram <strong>sugestões</strong> — não apostas. Se você fez a aposta na casa,
+              marque "Apostei e Ganhei" ou "Apostei e Perdi". Se ignorou a sugestão (a maioria),
+              use "Não apostei" pra limpar.
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -148,12 +150,20 @@ export default function Signals() {
               {resolveMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <CheckCircle2 className="w-3 h-3 mr-1" />} Atualizar resultados
             </Button>
             <Button variant="outline" size="sm" onClick={() => {
-              if (confirm("Marcar como neutros todos os sinais pendentes há mais de 2 dias? Útil pra zerar o backlog. Não pode ser desfeito.")) {
+              if (confirm("Marcar como 'Não apostei' todos os sinais pendentes há mais de 2 dias? Útil pra zerar o backlog. Não pode ser desfeito.")) {
                 expireMut.mutate({ maxAgeDays: 2 });
               }
             }} disabled={expireMut.isPending}
-              title="Marca como neutros todos os sinais pendentes há mais de 2 dias. Use quando o backlog crescer demais.">
+              title="Marca como 'Não apostei' todos os sinais pendentes há mais de 2 dias.">
               {expireMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <MinusCircle className="w-3 h-3 mr-1" />} Limpar vencidos
+            </Button>
+            <Button variant="outline" size="sm" className="text-muted-foreground" onClick={() => {
+              if (confirm(`Marcar TODOS os ${pending.length} sinais pendentes como 'Não apostei'? Use quando começar do zero. Não pode ser desfeito.`)) {
+                expireMut.mutate({ maxAgeDays: 0 });
+              }
+            }} disabled={expireMut.isPending || pending.length === 0}
+              title="Marca TODOS os sinais pendentes como 'Não apostei'. Use pra começar do zero.">
+              <MinusCircle className="w-3 h-3 mr-1" /> Não apostei em nada ({pending.length})
             </Button>
             <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
               {runMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Rodar Oracle agora
@@ -203,10 +213,10 @@ export default function Signals() {
                     <SelectTrigger className="bg-secondary border-border h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__all__">Todos</SelectItem>
-                      <SelectItem value="pending">Pendentes</SelectItem>
-                      <SelectItem value="profit">Ganhou</SelectItem>
-                      <SelectItem value="loss">Perdeu</SelectItem>
-                      <SelectItem value="neutral">Anulado</SelectItem>
+                      <SelectItem value="pending">Sugestão pendente</SelectItem>
+                      <SelectItem value="profit">Apostei • Ganhei</SelectItem>
+                      <SelectItem value="loss">Apostei • Perdi</SelectItem>
+                      <SelectItem value="neutral">Não apostei</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -267,25 +277,33 @@ export default function Signals() {
         <DialogContent className="bg-card border-border max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-foreground text-base">
-              Registrar como {marking ? outcomeLabel[marking.outcome] : ""}
+              {marking?.outcome === "profit" ? "Apostei e ganhei" : marking?.outcome === "loss" ? "Apostei e perdi" : "Não apostei nessa sugestão"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 mt-2">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">
-                {marking?.outcome === "profit" ? "Lucro (R$)" : marking?.outcome === "loss" ? "Prejuízo (R$, número positivo)" : "Valor (R$, opcional)"}
-              </label>
-              <Input
-                type="number" step="0.01" min="0"
-                value={profit}
-                onChange={(e) => setProfit(e.target.value)}
-                placeholder="0,00"
-                className="bg-secondary border-border"
-              />
-              <p className="text-[10px] text-muted-foreground">
-                Use 0 se a aposta foi simulada ou não houve dinheiro real. O cérebro aprende com o outcome, o valor é só pra contabilidade.
+            {marking?.outcome === "neutral" ? (
+              <p className="text-xs text-muted-foreground">
+                Confirma que você <strong>não fez essa aposta</strong>? Ela vai ser marcada como neutra e sair da lista de pendentes.
+                Não conta no seu P&L nem no aprendizado do robô.
               </p>
-            </div>
+            ) : (
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">
+                  {marking?.outcome === "profit" ? "Quanto você ganhou (R$)?" : "Quanto você perdeu (R$, número positivo)?"}
+                </label>
+                <Input
+                  type="number" step="0.01" min="0"
+                  value={profit}
+                  onChange={(e) => setProfit(e.target.value)}
+                  placeholder="0,00"
+                  className="bg-secondary border-border"
+                  autoFocus
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Este é o valor que entrou (ou saiu) da sua banca de verdade na casa de apostas. Se a aposta foi simulada, use 0.
+                </p>
+              </div>
+            )}
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setMarking(null)}>Cancelar</Button>
               <Button onClick={submitMarking} disabled={markMut.isPending} className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground">
@@ -859,15 +877,21 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {isPending && (
-            <div className="flex gap-1">
-              <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10" onClick={() => onMark("profit")}>
-                <CheckCircle2 className="w-3 h-3 mr-1" /> Ganhou
+            <div className="flex gap-1 flex-wrap justify-end">
+              <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10"
+                title="Eu fiz essa aposta na minha casa de apostas e ganhei"
+                onClick={() => onMark("profit")}>
+                <CheckCircle2 className="w-3 h-3 mr-1" /> Apostei • Ganhei
               </Button>
-              <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10" onClick={() => onMark("loss")}>
-                <XCircle className="w-3 h-3 mr-1" /> Perdeu
+              <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10"
+                title="Eu fiz essa aposta na minha casa de apostas e perdi"
+                onClick={() => onMark("loss")}>
+                <XCircle className="w-3 h-3 mr-1" /> Apostei • Perdi
               </Button>
-              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={() => onMark("neutral")}>
-                <MinusCircle className="w-3 h-3 mr-1" /> Anular
+              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground"
+                title="Eu NÃO fiz essa aposta — apenas ignorar essa sugestão e não contar no P&L"
+                onClick={() => onMark("neutral")}>
+                <MinusCircle className="w-3 h-3 mr-1" /> Não apostei
               </Button>
             </div>
           )}
