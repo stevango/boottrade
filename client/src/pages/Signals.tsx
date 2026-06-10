@@ -377,6 +377,92 @@ function MatchAnalysisPanel({ mut, ctx }: { mut: any; ctx: { home: string; away:
   );
 }
 
+// Parse the structured-text advice produced by buildAdvisorPrompt. The LLM
+// is instructed to emit 6 lines starting with DECISÃO/TAMANHO/APOSTA/
+// MERCADO_ALTERNATIVO/RISCO/RESUMO. We also strip ** markdown emphasis in
+// case the model slips it in.
+function parseAdvice(text: string): { decisao?: string; tamanho?: string; aposta?: string; alternativo?: string; risco?: string; resumo?: string; raw: string } {
+  const lines = text.replace(/\*\*/g, "").split(/\r?\n/);
+  const out: Record<string, string> = {};
+  const map: Record<string, string> = {
+    "DECISÃO": "decisao", "DECISAO": "decisao",
+    "TAMANHO": "tamanho",
+    "APOSTA": "aposta",
+    "MERCADO_ALTERNATIVO": "alternativo", "MERCADO ALTERNATIVO": "alternativo",
+    "RISCO": "risco",
+    "RESUMO": "resumo",
+  };
+  let current = "";
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = /^([A-ZÇÃÕ_ ]+):\s*(.*)$/.exec(line);
+    if (m && map[m[1].trim().toUpperCase()]) {
+      current = map[m[1].trim().toUpperCase()];
+      out[current] = m[2].trim();
+    } else if (current) {
+      out[current] = (out[current] ? out[current] + " " : "") + line;
+    }
+  }
+  return { ...out, raw: text };
+}
+
+function AdviceRender({ text }: { text: string }) {
+  const a = parseAdvice(text);
+  const decLower = (a.decisao || "").toLowerCase();
+  const tone =
+    decLower.startsWith("sim") ? { badge: "bg-profit text-background", border: "border-profit/40", label: "APOSTE" } :
+    decLower.startsWith("nao") || decLower.startsWith("não") ? { badge: "bg-loss text-background", border: "border-loss/40", label: "NÃO APOSTE" } :
+    decLower.includes("caut") ? { badge: "bg-warning text-background", border: "border-warning/40", label: "CAUTELOSO" } :
+    { badge: "bg-secondary text-foreground", border: "border-border", label: a.decisao || "—" };
+
+  // If parsing failed (no DECISÃO line found), render the raw text as fallback.
+  if (!a.decisao) {
+    return (
+      <div className="p-3 rounded bg-card border border-border">
+        <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{text}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-lg border-2 ${tone.border} overflow-hidden`}>
+      {/* Big decision banner */}
+      <div className={`${tone.badge} px-4 py-3 flex items-center justify-between flex-wrap gap-2`}>
+        <span className="font-bold text-base tracking-wide">{tone.label}</span>
+        {a.tamanho && <span className="text-xs font-medium opacity-90">Stake: {a.tamanho}</span>}
+      </div>
+
+      <div className="p-3 space-y-2 bg-card">
+        {/* The bet itself — highlighted when SIM */}
+        {a.aposta && a.aposta !== "-" && (
+          <div className={`p-3 rounded ${decLower.startsWith("sim") ? "bg-profit/10 border border-profit/30" : "bg-secondary"}`}>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Aposta sugerida</p>
+            <p className="text-sm text-foreground font-medium leading-snug">{a.aposta}</p>
+          </div>
+        )}
+
+        {a.alternativo && a.alternativo !== "-" && (
+          <Line label="Alternativa mais segura" value={a.alternativo} />
+        )}
+        {a.risco && <Line label="Risco principal" value={a.risco} />}
+        {a.resumo && <Line label="Resumo" value={a.resumo} />}
+
+        <p className="text-[10px] text-muted-foreground pt-1">Recomendação salva no histórico.</p>
+      </div>
+    </div>
+  );
+}
+
+function Line({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{label}</p>
+      <p className="text-xs text-foreground leading-snug">{value}</p>
+    </div>
+  );
+}
+
 function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number } }) {
   const adviseMut = trpc.matchAnalysis.advise.useMutation();
   const utils = trpc.useUtils();
@@ -423,20 +509,15 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
       {r?.error && r?.configured !== false && (
         <p className="text-[11px] text-loss">{r.error}</p>
       )}
-      {r?.advice && (
-        <div className="p-3 rounded bg-card border border-border">
-          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{r.advice}</p>
-          <p className="text-[10px] text-muted-foreground mt-2">Recomendação salva no histórico.</p>
-        </div>
-      )}
+      {r?.advice && <AdviceRender text={r.advice} />}
 
       {showHistory && past.length > 0 && (
         <div className="space-y-2 pt-2 border-t border-border">
           <p className="text-[11px] text-muted-foreground">Recomendações anteriores para este sinal:</p>
           {past.map((p: any) => (
-            <div key={p.id} className="p-2 rounded bg-card border border-border">
-              <p className="text-[10px] text-muted-foreground mb-1">{new Date(p.createdAt).toLocaleString("pt-BR")}</p>
-              <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{p.advice}</p>
+            <div key={p.id} className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">{new Date(p.createdAt).toLocaleString("pt-BR")}</p>
+              <AdviceRender text={p.advice} />
             </div>
           ))}
         </div>
