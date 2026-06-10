@@ -1,4 +1,4 @@
-import { eq, desc, and, count } from "drizzle-orm";
+import { eq, desc, and, count, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, robots, trades, backtests, riskSettings,
@@ -372,6 +372,50 @@ export async function addBrainDecision(userId: number, robotId: number, data: an
   }).where(eq(robotBrain.id, brain.id));
 
   return { success: true, maturityLevel: newMaturity, decisionId };
+}
+
+// Looks for a pending decision with the same asset for this user+robot in
+// the last sinceHours hours. Used by the Oracle scan to skip creating
+// duplicates when the same event keeps showing up every tick.
+export async function findPendingDecisionByAsset(userId: number, robotId: number, asset: string, sinceHours = 24): Promise<{ id: number; confidence: string | null } | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
+  const rows = await db.select({ id: brainDecisions.id, confidence: brainDecisions.confidence })
+    .from(brainDecisions)
+    .where(and(
+      eq(brainDecisions.userId, userId),
+      eq(brainDecisions.robotId, robotId),
+      eq(brainDecisions.asset, asset),
+      eq(brainDecisions.outcome, "pending"),
+      gte(brainDecisions.createdAt, since),
+    ))
+    .limit(1);
+  return rows[0] || null;
+}
+
+// Bulk-expire stale pending decisions: marks anything that's still pending
+// after maxAgeDays as neutral with a synthetic reasoning note. Called by the
+// "Limpar vencidos" UI action and also periodically by the scheduler to
+// keep the pending count from growing unbounded.
+export async function expireStalePendingDecisions(userId: number, robotId: number | null, maxAgeDays = 7): Promise<{ expired: number }> {
+  const db = await getDb();
+  if (!db) return { expired: 0 };
+  const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  const filters = [
+    eq(brainDecisions.userId, userId),
+    eq(brainDecisions.outcome, "pending"),
+  ];
+  if (robotId != null) filters.push(eq(brainDecisions.robotId, robotId));
+  // We can't filter by createdAt < cutoff in the same query as the outcome
+  // change in a portable way with drizzle/mysql, so do a select then update.
+  const rows = await db.select({ id: brainDecisions.id, createdAt: brainDecisions.createdAt }).from(brainDecisions).where(and(...filters));
+  const oldIds = rows.filter((r) => r.createdAt && new Date(r.createdAt).getTime() < cutoff.getTime()).map((r) => r.id);
+  if (oldIds.length === 0) return { expired: 0 };
+  for (const id of oldIds) {
+    await db.update(brainDecisions).set({ outcome: "neutral", profitAmount: "0" }).where(eq(brainDecisions.id, id));
+  }
+  return { expired: oldIds.length };
 }
 
 // Resolve a pending decision with outcome and update assertiveness

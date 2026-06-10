@@ -61,10 +61,23 @@ export default function Signals() {
   });
   const resolveMut = trpc.signals.resolveNow.useMutation({
     onSuccess: (r) => {
-      toast.success(`Resultados atualizados — ${r.resolved} de ${r.checked} sinais resolvidos automaticamente${r.errors ? ` (${r.errors} erros)` : ""}`);
+      const parts = [`${r.resolved}/${r.checked} resolvidos`];
+      if (r.expired > 0) parts.push(`${r.expired} expirados`);
+      if (r.errors > 0) parts.push(`${r.errors} erros`);
+      toast.success(`Atualização concluída: ${parts.join(" · ")}`);
       utils.signals.list.invalidate();
+      utils.signals.pnl.invalidate();
     },
     onError: () => toast.error("Falha ao buscar resultados."),
+  });
+  const expireMut = trpc.signals.expireStale.useMutation({
+    onSuccess: (r) => {
+      if (r.expired > 0) toast.success(`${r.expired} sinais vencidos foram marcados como neutros.`);
+      else toast.message("Nada a limpar — nenhum sinal pendente passou da idade.");
+      utils.signals.list.invalidate();
+      utils.signals.pnl.invalidate();
+    },
+    onError: () => toast.error("Falha ao limpar pendentes."),
   });
 
   const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral" } | null>(null);
@@ -131,8 +144,16 @@ export default function Signals() {
               {isFetching ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />} Recarregar
             </Button>
             <Button variant="outline" size="sm" onClick={() => resolveMut.mutate()} disabled={resolveMut.isPending}
-              title="Consulta os placares dos jogos já encerrados e marca Ganhou/Perdeu automaticamente nos sinais h2h.">
+              title="Consulta os placares dos jogos já encerrados, marca Ganhou/Perdeu automaticamente nos h2h e expira sinais com mais de 7 dias.">
               {resolveMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <CheckCircle2 className="w-3 h-3 mr-1" />} Atualizar resultados
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              if (confirm("Marcar como neutros todos os sinais pendentes há mais de 2 dias? Útil pra zerar o backlog. Não pode ser desfeito.")) {
+                expireMut.mutate({ maxAgeDays: 2 });
+              }
+            }} disabled={expireMut.isPending}
+              title="Marca como neutros todos os sinais pendentes há mais de 2 dias. Use quando o backlog crescer demais.">
+              {expireMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <MinusCircle className="w-3 h-3 mr-1" />} Limpar vencidos
             </Button>
             <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
               {runMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Rodar Oracle agora

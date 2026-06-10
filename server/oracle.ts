@@ -3,7 +3,7 @@
 // it on the "Sinais ao Vivo" page and the robot brain can learn from the
 // outcome (won/lost) over time.
 
-import { addBrainDecision, getDb, resolveDecision, getUserBalance, addSignalAdvice, getAppSetting } from "./db";
+import { addBrainDecision, getDb, resolveDecision, getUserBalance, addSignalAdvice, getAppSetting, findPendingDecisionByAsset, expireStalePendingDecisions } from "./db";
 import { robots, userRobots, brainDecisions } from "../drizzle/schema";
 import { and, eq, gte } from "drizzle-orm";
 import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetchScores, type ScoreEvent } from "./oddsData";
@@ -182,12 +182,19 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
   const ranked = Array.from(seen.values()).sort((a, b) => b.bet.edgePct - a.bet.edgePct).slice(0, MAX_SIGNALS_PER_RUN);
 
   let created = 0;
+  let skippedDupes = 0;
   const insertedForAdvise: { decisionId: number; bet: ValueBet; source: string }[] = [];
   for (const { bet, source } of ranked) {
+    const asset = signalAsset(bet);
     try {
+      // Dedup: if the same (event | market | outcome) is already pending in
+      // the last 48h for this user+robot, skip — Oracle ticks hourly and we
+      // don't want 24 copies of the same Spain × Cape Verde sitting around.
+      const existing = await findPendingDecisionByAsset(userId, oracleId, asset, 48);
+      if (existing) { skippedDupes++; continue; }
       const r = await addBrainDecision(userId, oracleId, {
         decision: "buy" as const,
-        asset: signalAsset(bet),
+        asset,
         confidence: bet.edgePct,
         reasoning: reasoningFor(bet, source),
         executedBy: "robot" as const,
@@ -201,6 +208,7 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
       console.warn("[oracle] addBrainDecision failed:", e instanceof Error ? e.message : e);
     }
   }
+  if (skippedDupes > 0) console.log(`[oracle] ${skippedDupes} duplicate signals skipped for user ${userId}`);
 
   // Auto-orientação: run the consultor on the top N edges if both API-Football
   // and the LLM are configured AND admin hasn't disabled it. Fire-and-forget
@@ -269,14 +277,31 @@ function decideH2H(home: string, away: string, outcome: string, scores: { name: 
   return bet === winner ? "profit" : "loss";
 }
 
-type ResolveResult = { userId: number; resolved: number; checked: number; errors: number };
+type ResolveResult = { userId: number; resolved: number; checked: number; errors: number; expired: number };
+
+// Parses "em 15/06/2026, 16:00:00" out of the reasoning string into ms epoch.
+function parseEventDate(reasoning: string | null): number | null {
+  if (!reasoning) return null;
+  const m = /em\s+(\d{2})\/(\d{2})\/(\d{4}),?\s*(\d{2}):(\d{2})(?::(\d{2}))?/.exec(reasoning);
+  if (!m) return null;
+  const [, dd, mm, yyyy, h, min, s] = m;
+  const t = Date.UTC(+yyyy, +mm - 1, +dd, +h, +min, +(s || "0"));
+  return Number.isFinite(t) ? t : null;
+}
 
 export async function tryResolveOracleSignals(userId: number): Promise<ResolveResult> {
   const oracleId = await getOracleRobotId();
-  if (oracleId == null) return { userId, resolved: 0, checked: 0, errors: 0 };
-  if (!(await isOddsConfigured())) return { userId, resolved: 0, checked: 0, errors: 0 };
+  if (oracleId == null) return { userId, resolved: 0, checked: 0, errors: 0, expired: 0 };
+
+  // First sweep: cleanup signals for games that already played out > 2 days
+  // ago but never got an automatic resolution (non-h2h markets, missing
+  // /scores match, etc). Mark them neutral so they stop bloating the
+  // pending count.
+  const expiredResult = await expireStalePendingDecisions(userId, oracleId, 7);
+
+  if (!(await isOddsConfigured())) return { userId, resolved: 0, checked: 0, errors: 0, expired: expiredResult.expired };
   const db = await getDb();
-  if (!db) return { userId, resolved: 0, checked: 0, errors: 0 };
+  if (!db) return { userId, resolved: 0, checked: 0, errors: 0, expired: expiredResult.expired };
 
   // Pull recent pending signals for this user — last 14 days, oracle only.
   const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
@@ -289,12 +314,20 @@ export async function tryResolveOracleSignals(userId: number): Promise<ResolveRe
     eq(brainDecisions.robotId, oracleId),
     eq(brainDecisions.outcome, "pending"),
     gte(brainDecisions.createdAt, cutoff),
-  )).limit(200);
+  )).limit(500);
 
-  if (pending.length === 0) return { userId, resolved: 0, checked: 0, errors: 0 };
+  if (pending.length === 0) return { userId, resolved: 0, checked: 0, errors: 0, expired: expiredResult.expired };
+
+  // Skip signals whose game hasn't happened yet — no point asking /scores.
+  const now = Date.now();
+  const playable = pending.filter((p) => {
+    const ts = parseEventDate(p.reasoning);
+    if (ts == null) return true;          // unknown date — try anyway
+    return ts < now + 60 * 60 * 1000;     // started or starting within 1h
+  });
 
   // Parse + group by sport so we minimize /scores calls.
-  const parsed = pending.map((p) => parseSignal({ id: p.id, asset: p.asset, reasoning: p.reasoning })).filter((p): p is ParsedSignal => p != null);
+  const parsed = playable.map((p) => parseSignal({ id: p.id, asset: p.asset, reasoning: p.reasoning })).filter((p): p is ParsedSignal => p != null);
   const bySport = new Map<string, ParsedSignal[]>();
   for (const p of parsed) {
     if (!bySport.has(p.sport)) bySport.set(p.sport, []);
@@ -305,7 +338,9 @@ export async function tryResolveOracleSignals(userId: number): Promise<ResolveRe
   for (const [sport, signals] of Array.from(bySport.entries())) {
     let scoreEvents: ScoreEvent[];
     try {
-      scoreEvents = await fetchScores(sport, 3);
+      // Look back 7 days for finished games — catches more matches than the
+      // previous 3-day window and is well within The Odds API quota.
+      scoreEvents = await fetchScores(sport, 7);
     } catch (e) {
       errors++;
       console.warn(`[oracle] fetchScores(${sport}) failed:`, e instanceof Error ? e.message : e);
@@ -327,7 +362,7 @@ export async function tryResolveOracleSignals(userId: number): Promise<ResolveRe
       }
     }
   }
-  return { userId, resolved, checked: parsed.length, errors };
+  return { userId, resolved, checked: parsed.length, errors, expired: expiredResult.expired };
 }
 
 export async function tryResolveAllOracleSignals(): Promise<ResolveResult[]> {

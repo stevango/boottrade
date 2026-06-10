@@ -21,6 +21,7 @@ import {
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   addSignalAdvice, getSignalAdviceHistory, getSignalAdviceForDecision,
   getUserBalance, setUserBalance, getBettingPnl, getDailyExposure,
+  expireStalePendingDecisions,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
@@ -265,6 +266,11 @@ export const appRouter = router({
     resolveNow: protectedProcedure.mutation(async ({ ctx }) => {
       return tryResolveOracleSignals(ctx.user.id);
     }),
+    expireStale: protectedProcedure
+      .input(z.object({ maxAgeDays: z.number().min(1).max(60).optional() }).optional())
+      .mutation(async ({ ctx, input }) => {
+        return expireStalePendingDecisions(ctx.user.id, null, input?.maxAgeDays ?? 2);
+      }),
     pnl: protectedProcedure.query(async ({ ctx }) => getBettingPnl(ctx.user.id)),
     exposure: protectedProcedure.query(async ({ ctx }) => {
       const [exp, bankroll, enabled, maxBets, maxStakePct] = await Promise.all([
