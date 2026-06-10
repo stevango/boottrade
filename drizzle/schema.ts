@@ -332,12 +332,25 @@ export const signalAdvice = mysqlTable("signal_advice", {
   commence: timestamp("commence"),
   prompt: text("prompt").notNull(),
   advice: text("advice").notNull(),
+  decision: varchar("decision", { length: 20 }),
+  recommendedStakeBrl: decimal("recommendedStakeBrl", { precision: 15, scale: 2 }),
   model: varchar("model", { length: 80 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   userIdx: index("signal_advice_userId_createdAt_idx").on(t.userId, t.createdAt),
   decisionIdx: index("signal_advice_decisionId_idx").on(t.decisionId),
 }));
+
+// Persistent cache of api-football team resolutions. National team names
+// don't change so we keep these forever to save quota.
+export const teamCache = mysqlTable("team_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  query: varchar("query", { length: 100 }).notNull().unique(),
+  teamId: int("teamId").notNull(),
+  teamName: varchar("teamName", { length: 120 }).notNull(),
+  logo: text("logo"),
+  fetchedAt: timestamp("fetchedAt").defaultNow().notNull(),
+});
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
@@ -355,3 +368,4 @@ export type FinancialGoal = typeof financialGoals.$inferSelect;
 export type AiConversation = typeof aiConversations.$inferSelect;
 export type DailyPnl = typeof dailyPnl.$inferSelect;
 export type SignalAdvice = typeof signalAdvice.$inferSelect;
+export type TeamCache = typeof teamCache.$inferSelect;

@@ -5,7 +5,7 @@
 // Fase A (este arquivo): H2H + forma recente + predição pré-computada.
 // Fases B e C (artilheiros, síntese LLM) virão em arquivos separados.
 
-import { getAppSetting } from "./db";
+import { getAppSetting, getCachedTeam, setCachedTeam } from "./db";
 
 const BASE = "https://v3.football.api-sports.io";
 
@@ -100,6 +100,12 @@ const TEAM_CACHE_TTL = 24 * 60 * 60 * 1000;
 export async function resolveTeam(name: string): Promise<{ id: number; name: string; logo: string } | null> {
   const cleaned = name.trim();
   if (!cleaned) return null;
+  // Persistent DB cache first — national team names don't change, hits don't
+  // consume any api-football quota at all.
+  try {
+    const db = await getCachedTeam(cleaned);
+    if (db) return { id: db.teamId, name: db.teamName, logo: db.logo || "" };
+  } catch { /* fall through to memory + API */ }
   const cacheKey = cleaned.toLowerCase();
   const cached = teamCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < TEAM_CACHE_TTL) return { id: cached.id, name: cached.name, logo: cached.logo };
@@ -138,6 +144,8 @@ export async function resolveTeam(name: string): Promise<{ id: number; name: str
   const t = (exactNational ?? anyNational ?? exactName ?? results[0]).team;
   const value = { id: t.id, name: t.name, logo: t.logo };
   teamCache.set(cacheKey, { ...value, fetchedAt: Date.now() });
+  // Persist permanently — quota saved on every future analysis of this team.
+  try { await setCachedTeam(cleaned, t.id, t.name, t.logo || null); } catch { /* non-fatal */ }
   return value;
 }
 

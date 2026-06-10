@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter, BarChart2, Sparkles, History } from "lucide-react";
+import { Zap, RefreshCw, CheckCircle2, XCircle, MinusCircle, Loader2, Bot, Clock, TrendingUp, Filter, BarChart2, Sparkles, History, Shield } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -193,6 +193,8 @@ export default function Signals() {
             </CardContent>
           </Card>
         )}
+
+        <PnlAndExposurePanel />
 
         {isLoading && (
           <Card className="bg-card border-border"><CardContent className="p-6 flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></CardContent></Card>
@@ -424,6 +426,95 @@ function parseAdvice(text: string): { decisao?: string; tamanho?: string; aposta
     }
   }
   return { ...out, raw: text };
+}
+
+function PnlAndExposurePanel() {
+  const pnl = trpc.signals.pnl.useQuery();
+  const exposure = trpc.signals.exposure.useQuery();
+
+  if (pnl.isLoading || exposure.isLoading) return null;
+  const p = pnl.data;
+  const e = exposure.data;
+  if (!p || !e) return null;
+
+  const fmt = (n: number) => `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const tone = (net: number) => net > 0 ? "text-profit" : net < 0 ? "text-loss" : "text-muted-foreground";
+  const stakePct = e.dailyMaxStakeBrl > 0 ? Math.min(100, (e.exposureBrl / e.dailyMaxStakeBrl) * 100) : 0;
+  const betsPct = e.dailyMaxBets > 0 ? Math.min(100, (e.betsToday / e.dailyMaxBets) * 100) : 0;
+
+  return (
+    <div className="grid sm:grid-cols-2 gap-3">
+      <Card className="bg-card border-border">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-foreground flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> P&L de apostas</p>
+            <a href="/recommendations" className="text-[11px] text-primary hover:underline">Histórico</a>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <PnlCell label="Hoje" net={p.day.net} settled={p.day.settled} winRate={p.day.winRatePct} tone={tone(p.day.net)} fmt={fmt} />
+            <PnlCell label="7 dias" net={p.week.net} settled={p.week.settled} winRate={p.week.winRatePct} tone={tone(p.week.net)} fmt={fmt} />
+            <PnlCell label="30 dias" net={p.month.net} settled={p.month.settled} winRate={p.month.winRatePct} tone={tone(p.month.net)} fmt={fmt} />
+          </div>
+          {p.day.pending > 0 && (
+            <p className="text-[11px] text-muted-foreground mt-2 text-center">
+              {p.day.pending} aposta(s) pendente(s) de marcar resultado
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className={`bg-card border-border ${e.limitReached ? "border-loss/40" : ""}`}>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-foreground flex items-center gap-2">
+              <Shield className="w-4 h-4 text-primary" /> Limite diário (anti-tilt)
+            </p>
+            {e.limitReached && <Badge variant="outline" className="bg-loss/10 text-loss border-loss/30 text-[10px]">Limite atingido</Badge>}
+          </div>
+          <div className="space-y-2">
+            <div>
+              <div className="flex items-center justify-between text-[11px] mb-1">
+                <span className="text-muted-foreground">Stake hoje</span>
+                <span className={e.exposureBrl >= e.dailyMaxStakeBrl ? "text-loss font-medium" : "text-foreground"}>
+                  {fmt(e.exposureBrl)} / {fmt(e.dailyMaxStakeBrl)} ({e.dailyMaxStakePct}% banca)
+                </span>
+              </div>
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div className={`h-full transition-all ${stakePct >= 100 ? "bg-loss" : stakePct >= 80 ? "bg-warning" : "bg-primary"}`} style={{ width: `${stakePct}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-[11px] mb-1">
+                <span className="text-muted-foreground">Apostas SIM hoje</span>
+                <span className={e.betsToday >= e.dailyMaxBets ? "text-loss font-medium" : "text-foreground"}>
+                  {e.betsToday} / {e.dailyMaxBets}
+                </span>
+              </div>
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div className={`h-full transition-all ${betsPct >= 100 ? "bg-loss" : betsPct >= 80 ? "bg-warning" : "bg-primary"}`} style={{ width: `${betsPct}%` }} />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {e.limitReached
+                ? "Você atingiu o limite. Pare por hoje — o cérebro tilt-control sugere descanso."
+                : `Sobram ${fmt(e.remainingStakeBrl)} / ${e.remainingBets} aposta(s) hoje.`}
+              {" "}Ajuste em <a className="text-primary underline" href="/integrations">Integrações</a>.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function PnlCell({ label, net, settled, winRate, tone, fmt }: { label: string; net: number; settled: number; winRate: number; tone: string; fmt: (n: number) => string }) {
+  return (
+    <div className="p-2 rounded bg-secondary/40">
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p className={`text-sm font-bold ${tone}`}>{net >= 0 ? "+" : ""}{fmt(net)}</p>
+      <p className="text-[10px] text-muted-foreground">{settled} jogos · {winRate.toFixed(0)}% win</p>
+    </div>
+  );
 }
 
 function IntelligencePanel({ bi }: { bi: any }) {

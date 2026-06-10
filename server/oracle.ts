@@ -137,6 +137,8 @@ async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBe
       avgPrice: bet.avgPrice, edgePct: bet.edgePct,
       commence: bet.commence,
       prompt, advice, model: "auto",
+      decision: intelligence.decision,
+      recommendedStakeBrl: intelligence.recommendedStakeBrl,
     });
     return true;
   } catch (e) {

@@ -20,7 +20,7 @@ import {
   updateFinancialGoal, deleteFinancialGoal, getAiConversation, saveAiConversation,
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   addSignalAdvice, getSignalAdviceHistory, getSignalAdviceForDecision,
-  getUserBalance, setUserBalance,
+  getUserBalance, setUserBalance, getBettingPnl, getDailyExposure,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
@@ -146,21 +146,32 @@ export const appRouter = router({
   }),
 
   oracleConfig: router({
-    // Auto-orientação behavior toggles. Stored in app_settings so admin can
-    // tune them from /integrations without touching code or env vars.
+    // Auto-orientação + daily-risk toggles. Stored in app_settings so admin
+    // can tune them from /integrations without touching code or env vars.
     get: protectedProcedure.query(async () => {
       const enabled = await getAppSetting("AUTO_ADVISE_ENABLED");
       const topN = await getAppSetting("AUTO_ADVISE_TOP_N");
+      const maxBets = await getAppSetting("DAILY_MAX_BETS");
+      const maxStakePct = await getAppSetting("DAILY_MAX_STAKE_PCT");
       return {
         autoAdviseEnabled: enabled == null ? true : enabled.toLowerCase() !== "false",
         autoAdviseTopN: topN ? Math.max(0, Math.min(10, parseInt(topN, 10) || 5)) : 5,
+        dailyMaxBets: maxBets ? Math.max(0, Math.min(50, parseInt(maxBets, 10) || 5)) : 5,
+        dailyMaxStakePct: maxStakePct ? Math.max(0, Math.min(50, parseFloat(maxStakePct) || 10)) : 10,
       };
     }),
     set: adminProcedure
-      .input(z.object({ autoAdviseEnabled: z.boolean().optional(), autoAdviseTopN: z.number().min(0).max(10).optional() }))
+      .input(z.object({
+        autoAdviseEnabled: z.boolean().optional(),
+        autoAdviseTopN: z.number().min(0).max(10).optional(),
+        dailyMaxBets: z.number().min(0).max(50).optional(),
+        dailyMaxStakePct: z.number().min(0).max(50).optional(),
+      }))
       .mutation(async ({ input }) => {
         if (input.autoAdviseEnabled != null) await setAppSetting("AUTO_ADVISE_ENABLED", input.autoAdviseEnabled ? "true" : "false");
         if (input.autoAdviseTopN != null) await setAppSetting("AUTO_ADVISE_TOP_N", String(input.autoAdviseTopN));
+        if (input.dailyMaxBets != null) await setAppSetting("DAILY_MAX_BETS", String(input.dailyMaxBets));
+        if (input.dailyMaxStakePct != null) await setAppSetting("DAILY_MAX_STAKE_PCT", String(input.dailyMaxStakePct));
         return { success: true };
       }),
   }),
@@ -219,6 +230,8 @@ export const appRouter = router({
             avgPrice: input.avgPrice, edgePct: input.edgePct,
             commence: input.commence,
             prompt, advice,
+            decision: intelligence.decision,
+            recommendedStakeBrl: intelligence.recommendedStakeBrl,
           });
           return { configured: true as const, advice, intelligence, error: null };
         } catch (error) {
@@ -251,6 +264,29 @@ export const appRouter = router({
     }),
     resolveNow: protectedProcedure.mutation(async ({ ctx }) => {
       return tryResolveOracleSignals(ctx.user.id);
+    }),
+    pnl: protectedProcedure.query(async ({ ctx }) => getBettingPnl(ctx.user.id)),
+    exposure: protectedProcedure.query(async ({ ctx }) => {
+      const [exp, bankroll, enabled, maxBets, maxStakePct] = await Promise.all([
+        getDailyExposure(ctx.user.id),
+        getUserBalance(ctx.user.id),
+        getAppSetting("AUTO_ADVISE_ENABLED"),
+        getAppSetting("DAILY_MAX_BETS"),
+        getAppSetting("DAILY_MAX_STAKE_PCT"),
+      ]);
+      const dailyMaxBets = maxBets ? Math.max(0, Math.min(50, parseInt(maxBets, 10) || 5)) : 5;
+      const dailyMaxStakePct = maxStakePct ? Math.max(0, Math.min(50, parseFloat(maxStakePct) || 10)) : 10;
+      const dailyMaxStakeBrl = Math.round((bankroll * dailyMaxStakePct / 100) * 100) / 100;
+      const remainingBets = Math.max(0, dailyMaxBets - exp.betsToday);
+      const remainingStakeBrl = Math.max(0, dailyMaxStakeBrl - exp.exposureBrl);
+      const limitReached = exp.betsToday >= dailyMaxBets || exp.exposureBrl >= dailyMaxStakeBrl;
+      return {
+        betsToday: exp.betsToday, exposureBrl: exp.exposureBrl,
+        dailyMaxBets, dailyMaxStakeBrl, dailyMaxStakePct,
+        remainingBets, remainingStakeBrl,
+        limitReached, bankroll,
+        autoAdviseEnabled: enabled == null ? true : enabled.toLowerCase() !== "false",
+      };
     }),
   }),
 
@@ -758,17 +794,17 @@ export const appRouter = router({
     // App-wide settings management. Keys are whitelisted so the UI can't
     // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
     getSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N", "DAILY_MAX_BETS", "DAILY_MAX_STAKE_PCT"]) }))
       .query(async ({ input }) => {
         return getAppSettingMeta(input.key);
       }),
     setSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]), value: z.string().min(1).max(512) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N", "DAILY_MAX_BETS", "DAILY_MAX_STAKE_PCT"]), value: z.string().min(1).max(512) }))
       .mutation(async ({ input }) => {
         return setAppSetting(input.key, input.value.trim());
       }),
     clearSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N", "DAILY_MAX_BETS", "DAILY_MAX_STAKE_PCT"]) }))
       .mutation(async ({ input }) => {
         return deleteAppSetting(input.key);
       }),

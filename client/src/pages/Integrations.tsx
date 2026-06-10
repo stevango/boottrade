@@ -529,11 +529,13 @@ function OracleAutoAdviseCard({ isAdmin }: { isAdmin: boolean }) {
   const cfg = trpc.oracleConfig.get.useQuery();
   const utils = trpc.useUtils();
   const setMut = trpc.oracleConfig.set.useMutation({
-    onSuccess: () => { toast.success("Configuração salva."); utils.oracleConfig.get.invalidate(); },
+    onSuccess: () => { toast.success("Configuração salva."); utils.oracleConfig.get.invalidate(); utils.signals.exposure.invalidate(); },
     onError: () => toast.error("Falha ao salvar."),
   });
   const enabled = cfg.data?.autoAdviseEnabled ?? true;
   const topN = cfg.data?.autoAdviseTopN ?? 5;
+  const dailyMaxBets = cfg.data?.dailyMaxBets ?? 5;
+  const dailyMaxStakePct = cfg.data?.dailyMaxStakePct ?? 10;
   // Quota napkin math: each advised signal burns ~9 API-Football calls + 1
   // LLM call. With Oracle ticking every hour, a daily quota of 100 calls on
   // the free plan supports roughly floor(100/9) ≈ 11 advised signals total
@@ -595,6 +597,48 @@ function OracleAutoAdviseCard({ isAdmin }: { isAdmin: boolean }) {
             )}
             {!enabled && " Apenas chamadas manuais (botão 'Pedir orientação') consomem quota."}
           </p>
+        </div>
+
+        <div className="border-t border-border pt-3 space-y-3">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-primary" />
+            <Label className="text-sm text-foreground">Limites diários (anti-tilt)</Label>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-2">
+            Protege contra "perseguir prejuízos". Quando o limite é atingido, o painel em /signals avisa pra você parar por hoje.
+          </p>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs text-foreground">Máximo de apostas SIM por dia</Label>
+              <Badge variant="outline" className="text-xs">{dailyMaxBets} apostas</Badge>
+            </div>
+            <input
+              type="range" min="0" max="20" step="1" value={dailyMaxBets}
+              onChange={(e) => setMut.mutate({ dailyMaxBets: parseInt(e.target.value, 10) })}
+              disabled={!isAdmin || setMut.isPending}
+              className="w-full accent-primary disabled:opacity-50"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>0 (sem limite manual)</span><span>5 (recomendado)</span><span>20</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs text-foreground">Máximo de stake por dia (% da banca)</Label>
+              <Badge variant="outline" className="text-xs">{dailyMaxStakePct}%</Badge>
+            </div>
+            <input
+              type="range" min="0" max="30" step="0.5" value={dailyMaxStakePct}
+              onChange={(e) => setMut.mutate({ dailyMaxStakePct: parseFloat(e.target.value) })}
+              disabled={!isAdmin || setMut.isPending}
+              className="w-full accent-primary disabled:opacity-50"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>0%</span><span>10% (recomendado)</span><span>30%</span>
+            </div>
+          </div>
         </div>
 
         {!isAdmin && (

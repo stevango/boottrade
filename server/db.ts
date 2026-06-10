@@ -5,7 +5,7 @@ import {
   marketplaceListings, socialPosts, copyTrades, userRobots,
   robotBrain, brainDecisions, portfolioAssets, financialGoals,
   aiConversations, dailyPnl, brokerConnections, watchlist, appSettings,
-  signalAdvice
+  signalAdvice, teamCache
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';
@@ -947,6 +947,7 @@ export async function addSignalAdvice(userId: number, data: {
   decisionId?: number; home: string; away: string; market: string; outcome: string;
   bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number;
   commence?: string; prompt: string; advice: string; model?: string;
+  decision?: string; recommendedStakeBrl?: number;
 }) {
   const db = await getDb();
   if (!db) return { success: false };
@@ -964,6 +965,8 @@ export async function addSignalAdvice(userId: number, data: {
     commence: data.commence ? new Date(data.commence) : null,
     prompt: data.prompt,
     advice: data.advice,
+    decision: data.decision ?? null,
+    recommendedStakeBrl: data.recommendedStakeBrl != null ? data.recommendedStakeBrl.toString() : null,
     model: data.model ?? null,
   });
   return { success: true };
@@ -1004,4 +1007,70 @@ export async function setUserBalance(userId: number, balance: number): Promise<{
   if (!Number.isFinite(balance) || balance < 0) return { success: false };
   await db.update(users).set({ balance: balance.toString() }).where(eq(users.id, userId));
   return { success: true };
+}
+
+// Persistent team cache for api-football resolutions. National team names
+// don't change, so this saves quota dramatically.
+export async function getCachedTeam(query: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const r = await db.select().from(teamCache).where(eq(teamCache.query, query.toLowerCase())).limit(1);
+  return r[0] || null;
+}
+
+export async function setCachedTeam(query: string, tId: number, tName: string, logo: string | null) {
+  const db = await getDb();
+  if (!db) return;
+  const key = query.toLowerCase();
+  const existing = await db.select({ id: teamCache.id }).from(teamCache).where(eq(teamCache.query, key)).limit(1);
+  if (existing.length === 0) {
+    await db.insert(teamCache).values({ query: key, teamId: tId, teamName: tName, logo });
+  } else {
+    await db.update(teamCache).set({ teamId: tId, teamName: tName, logo, fetchedAt: new Date() }).where(eq(teamCache.id, existing[0].id));
+  }
+}
+
+// P&L summary for sports betting. Sums brain_decisions outcomes scoped to
+// the user across day/week/month buckets so the user can see how the bot
+// is doing without exporting anything.
+export async function getBettingPnl(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const day = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const rows = await db.select().from(brainDecisions).where(eq(brainDecisions.userId, userId));
+  const reduce = (since: Date) => {
+    let profit = 0, loss = 0, wins = 0, losses = 0, neutrals = 0, pending = 0;
+    for (const r of rows) {
+      if (new Date(r.createdAt).getTime() < since.getTime()) continue;
+      if (r.outcome === "profit") { wins++; profit += parseFloat(String(r.profitAmount || "0")); }
+      else if (r.outcome === "loss") { losses++; loss += parseFloat(String(r.profitAmount || "0")); }
+      else if (r.outcome === "neutral") neutrals++;
+      else pending++;
+    }
+    const settled = wins + losses + neutrals;
+    return { profit, loss, net: profit - loss, wins, losses, neutrals, pending, settled, winRatePct: settled > 0 ? (wins / settled) * 100 : 0 };
+  };
+  return { day: reduce(day), week: reduce(week), month: reduce(month) };
+}
+
+// Daily exposure tracker: sums recommended stakes from advice rows created
+// today, scoped to the user, where the advisor said SIM. Used by the UI to
+// show "you've already committed R$ X today" and warn before exceeding a
+// configured cap.
+export async function getDailyExposure(userId: number) {
+  const db = await getDb();
+  if (!db) return { betsToday: 0, exposureBrl: 0 };
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const rows = await db.select().from(signalAdvice).where(eq(signalAdvice.userId, userId));
+  let betsToday = 0, exposureBrl = 0;
+  for (const r of rows) {
+    if (new Date(r.createdAt).getTime() < startOfDay.getTime()) continue;
+    if (r.decision !== "SIM") continue;
+    const stake = parseFloat(String(r.recommendedStakeBrl || "0"));
+    if (stake > 0) { betsToday++; exposureBrl += stake; }
+  }
+  return { betsToday, exposureBrl };
 }
