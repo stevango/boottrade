@@ -8,7 +8,7 @@ import { robots, userRobots, brainDecisions } from "../drizzle/schema";
 import { and, eq, gte } from "drizzle-orm";
 import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetchScores, type ScoreEvent } from "./oddsData";
 import { isOddsIoConfigured, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
-import { isApiFootballConfigured, analyzeMatch, buildAdvisorPrompt, type AdviseInput } from "./matchAnalysis";
+import { isApiFootballConfigured, analyzeMatch, buildAdvisorPrompt, computeBetIntelligence, type AdviseInput } from "./matchAnalysis";
 import { isLLMConfigured, chatComplete } from "./llm";
 import type { ValueBet } from "./oddsAnalysis";
 
@@ -123,7 +123,8 @@ async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBe
       edgePct: bet.edgePct,
       commence: bet.commence,
     };
-    const prompt = buildAdvisorPrompt(input, analysis, bankroll);
+    const intelligence = computeBetIntelligence(input, analysis, bankroll);
+    const prompt = buildAdvisorPrompt(input, analysis, bankroll, intelligence);
     const advice = await chatComplete([
       { role: "system", content: "Você é um consultor de apostas esportivas estatístico, direto e honesto. Nunca prometa ganho garantido. Sempre considere risco de banca. Responda em português, parágrafos curtos." },
       { role: "user", content: prompt },

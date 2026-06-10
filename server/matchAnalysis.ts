@@ -489,6 +489,176 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
 // and calls the configured LLM. Output is short, honest, and Portuguese.
 // =============================================================================
 
+// =============================================================================
+// Bet intelligence — deterministic decision before calling the LLM
+// =============================================================================
+
+export type BetIntelligence = {
+  decision: "SIM" | "NÃO" | "CAUTELOSO";
+  reason: string;                    // Curta explicação determinística da decisão
+  ourProbabilityPct: number | null;  // Nossa estimativa da probabilidade da aposta
+  marketImpliedPct: number | null;   // Prob implícita do preço (1/odd)
+  ourEdgePct: number | null;         // Edge real segundo nosso modelo (não do mercado)
+  reportedEdgePct: number | null;    // Edge do feed (best vs avg)
+  kellyPct: number | null;           // 1/4 Kelly capped at 3%
+  recommendedStakePct: number;       // Stake final (sempre definido)
+  recommendedStakeBrl: number;       // Stake em R$ usando o bankroll
+  expectedReturnBrl: number;         // Lucro esperado se ganhar
+  sampleQuality: "alta" | "média" | "baixa";
+  bullets: string[];                 // Razões usadas pela decisão
+};
+
+const MAX_STAKE_PCT = 3;       // Nunca mais que 3% num único sinal
+const FLAT_LOW_CONFIDENCE = 0.5;
+const FLAT_MEDIUM = 1;
+
+// Map the bet's outcome string to our model's probability for that outcome.
+// Returns a number 0..100, or null if we can't map (e.g. exotic market we
+// don't model). Mainline markets supported: ML/h2h (home/draw/away or team
+// name), Totals/Goals Over-Under (over/under + point), BTTS (yes/no),
+// Double Chance (label-based).
+function resolveOurProbability(input: AdviseInput, a: MatchAnalysis): number | null {
+  const m = input.market.trim().toLowerCase();
+  const o = input.outcome.trim().toLowerCase();
+  const home = a.team1.name.toLowerCase();
+  const away = a.team2.name.toLowerCase();
+
+  // h2h / ML
+  if (m === "h2h" || m === "ml" || m === "moneyline" || m === "1x2" || m === "match winner") {
+    if (o === "draw" || o === "tie" || o === "empate") return a.prediction.drawPct;
+    if (o === "home" || o === home) return a.prediction.team1WinPct;
+    if (o === "away" || o === away) return a.prediction.team2WinPct;
+    return null;
+  }
+
+  // Totals / Goals Over-Under
+  if (m === "totals" || m === "goals over/under" || m === "over/under") {
+    const gp = a.goalProbabilities;
+    const point = input.bestPrice != null ? null : null; // we don't have point passed in here
+    // Without point, we can only guess at the threshold from the outcome string
+    const pt = /([\d.]+)/.exec(o)?.[1];
+    const threshold = pt ? parseFloat(pt) : 2.5;
+    const overPct =
+      threshold < 1 ? gp.over05Pct :
+      threshold < 2 ? gp.over15Pct :
+      threshold < 3 ? gp.over25Pct :
+      gp.over35Pct;
+    if (o.includes("over")) return overPct;
+    if (o.includes("under")) return 100 - overPct;
+    return null;
+  }
+
+  // Both Teams To Score
+  if (m === "btts" || m === "both teams to score") {
+    if (o === "yes" || o === "sim") return a.goalProbabilities.bothScorePct;
+    if (o === "no" || o === "não") return 100 - a.goalProbabilities.bothScorePct;
+    return null;
+  }
+
+  // Double Chance — outcome looks like "Home or Draw"
+  if (m === "double chance" || m.includes("dupla")) {
+    const t1 = a.prediction.team1WinPct;
+    const t2 = a.prediction.team2WinPct;
+    const dr = a.prediction.drawPct;
+    if ((o.includes("home") || o.includes(home)) && o.includes("draw")) return t1 + dr;
+    if ((o.includes("away") || o.includes(away)) && o.includes("draw")) return t2 + dr;
+    if (o.includes("home") && o.includes("away")) return t1 + t2;
+    return null;
+  }
+
+  return null;
+}
+
+function sampleQuality(a: MatchAnalysis): "alta" | "média" | "baixa" {
+  const w = (f: FormAnalysis) => f.windows.find((x) => x.games >= 5) ?? f.windows[0];
+  const min = Math.min(w(a.form1).games, w(a.form2).games);
+  if (min < 5 || a.h2h.totalGames < 2) return "baixa";
+  if (min < 12) return "média";
+  return "alta";
+}
+
+export function computeBetIntelligence(input: AdviseInput, a: MatchAnalysis, bankrollBrl: number): BetIntelligence {
+  const reportedEdgePct = input.edgePct ?? null;
+  const odds = input.bestPrice ?? null;
+  const marketImpliedPct = odds && odds > 1 ? (100 / odds) : null;
+  const ourProbabilityPct = resolveOurProbability(input, a);
+  // Real edge from OUR model's view: (p * odds - 1) * 100
+  const ourEdgePct = (ourProbabilityPct != null && odds && odds > 1)
+    ? (ourProbabilityPct / 100 * odds - 1) * 100
+    : null;
+  const sq = sampleQuality(a);
+  const bullets: string[] = [];
+
+  // Kelly fraction (1/4 Kelly), only when we have our probability and odds.
+  let kellyPct: number | null = null;
+  if (ourProbabilityPct != null && odds && odds > 1) {
+    const p = ourProbabilityPct / 100;
+    const b = odds - 1;
+    const fullKelly = (p * b - (1 - p)) / b;
+    kellyPct = Math.max(0, fullKelly * 100 / 4); // quarter Kelly
+  }
+
+  // Deterministic decision rules.
+  let decision: BetIntelligence["decision"] = "CAUTELOSO";
+  let reason = "";
+  let stakePct = 0;
+
+  if (reportedEdgePct != null && reportedEdgePct >= 25) {
+    decision = "NÃO";
+    reason = `Edge de ${reportedEdgePct.toFixed(1)}% no feed é alto demais pra ser real — quase sempre é erro de odd, definição diferente de mercado entre casas, ou liquidez baixa naquela casa.`;
+    bullets.push(reason);
+    stakePct = 0;
+  } else if (ourProbabilityPct != null && ourEdgePct != null && ourEdgePct < 0) {
+    decision = "NÃO";
+    reason = `Nosso modelo estima ${ourProbabilityPct.toFixed(1)}% de chance pra esse desfecho. No preço ${odds!.toFixed(2)}, isso seria uma aposta de valor NEGATIVO (${ourEdgePct.toFixed(1)}%) — o mercado está mais correto que o feed sugere.`;
+    bullets.push(reason);
+    stakePct = 0;
+  } else if (sq === "baixa" && (reportedEdgePct ?? 0) < 10) {
+    decision = "CAUTELOSO";
+    reason = `Amostra histórica é insuficiente (H2H ${a.h2h.totalGames} jogos; forma com poucos jogos). Sem confiança suficiente pra estaca normal.`;
+    bullets.push(reason);
+    stakePct = FLAT_LOW_CONFIDENCE; // 0.5% flat
+  } else if (ourProbabilityPct != null && ourEdgePct != null && ourEdgePct >= 2 && kellyPct != null && kellyPct > 0) {
+    // Real value bet according to our model.
+    decision = "SIM";
+    const cappedKelly = Math.min(kellyPct, MAX_STAKE_PCT);
+    stakePct = sq === "alta" ? cappedKelly : Math.min(cappedKelly, FLAT_MEDIUM);
+    reason = `Modelo confirma valor: nossa estimativa ${ourProbabilityPct.toFixed(1)}% vs implícita ${marketImpliedPct!.toFixed(1)}% (edge real ${ourEdgePct.toFixed(1)}%). Quarter-Kelly recomenda ${kellyPct.toFixed(2)}%; capamos em ${stakePct.toFixed(2)}%.`;
+    bullets.push(`Edge real do modelo: ${ourEdgePct.toFixed(1)}%`);
+    bullets.push(`Kelly fracionário 1/4: ${kellyPct.toFixed(2)}%`);
+    bullets.push(`Cap por aposta: ${MAX_STAKE_PCT}%`);
+  } else if (ourProbabilityPct == null) {
+    // Market we don't model — fall back to the feed's edge with conservative stake.
+    if ((reportedEdgePct ?? 0) >= 3 && (reportedEdgePct ?? 0) < 15) {
+      decision = "CAUTELOSO";
+      stakePct = sq === "alta" ? FLAT_MEDIUM : FLAT_LOW_CONFIDENCE;
+      reason = `Não conseguimos modelar esse mercado (${input.market}) — usamos só o edge do feed (${reportedEdgePct?.toFixed(1)}%). Stake flat conservador.`;
+      bullets.push(reason);
+    } else {
+      decision = "NÃO";
+      reason = `Mercado não modelado e edge fora da faixa segura — sem fundamento estatístico pra apostar.`;
+      bullets.push(reason);
+    }
+  } else {
+    decision = "CAUTELOSO";
+    stakePct = FLAT_LOW_CONFIDENCE;
+    reason = `Edge marginal ou positivo mas pequeno. Stake flat 0.5%.`;
+    bullets.push(reason);
+  }
+
+  const recommendedStakePct = stakePct;
+  const recommendedStakeBrl = Math.round((bankrollBrl * stakePct / 100) * 100) / 100;
+  const expectedReturnBrl = (odds && odds > 1) ? Math.round((recommendedStakeBrl * (odds - 1)) * 100) / 100 : 0;
+
+  return {
+    decision, reason,
+    ourProbabilityPct, marketImpliedPct, ourEdgePct, reportedEdgePct,
+    kellyPct,
+    recommendedStakePct, recommendedStakeBrl, expectedReturnBrl,
+    sampleQuality: sq, bullets,
+  };
+}
+
 export type AdviseInput = {
   home: string;
   away: string;
@@ -501,7 +671,7 @@ export type AdviseInput = {
   commence?: string;
 };
 
-export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis, bankrollBrl = 5000): string {
+export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis, bankrollBrl = 5000, bi?: BetIntelligence): string {
   const w1 = a.form1.windows.find((w) => w.games >= 5) ?? a.form1.windows[0];
   const w2 = a.form2.windows.find((w) => w.games >= 5) ?? a.form2.windows[0];
   const gp = a.goalProbabilities;
@@ -538,22 +708,35 @@ export function buildAdvisorPrompt(input: AdviseInput, a: MatchAnalysis, bankrol
     `- Predição interna: ${a.team1.name} ${p.team1WinPct}% / Empate ${p.drawPct}% / ${a.team2.name} ${p.team2WinPct}%. Placar provável ${p.probableScore}. Confiança ${p.confidence}.`,
     `- Probabilidade de gols: ambas marcam ${gp.bothScorePct.toFixed(0)}%, over 2.5 ${gp.over25Pct.toFixed(0)}%, total esperado ${gp.expectedTotal.toFixed(2)} gols.`,
     "",
-    `Bankroll do usuário: R$ ${bankrollBrl.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (use isso pra converter % em valor de aposta).`,
+    `Bankroll do usuário: R$ ${bankrollBrl.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}.`,
+    "",
+    bi ? "DECISÃO JÁ CALCULADA PELO MODELO DETERMINÍSTICO (use esses números, não invente outros):" : "",
+    bi ? `- Decisão: ${bi.decision}` : "",
+    bi ? `- Stake recomendado: ${bi.recommendedStakePct.toFixed(2)}% (R$ ${bi.recommendedStakeBrl.toFixed(2)})` : "",
+    bi && bi.ourProbabilityPct != null ? `- Nossa estimativa de probabilidade: ${bi.ourProbabilityPct.toFixed(1)}%` : "",
+    bi && bi.marketImpliedPct != null ? `- Probabilidade implícita do preço: ${bi.marketImpliedPct.toFixed(1)}%` : "",
+    bi && bi.ourEdgePct != null ? `- Edge real (modelo vs preço): ${bi.ourEdgePct.toFixed(1)}%` : "",
+    bi && bi.reportedEdgePct != null ? `- Edge reportado pelo feed: ${bi.reportedEdgePct.toFixed(1)}%` : "",
+    bi && bi.kellyPct != null ? `- Quarter-Kelly puro: ${bi.kellyPct.toFixed(2)}% (capamos em 3% por aposta)` : "",
+    bi ? `- Qualidade da amostra estatística: ${bi.sampleQuality}` : "",
+    bi ? `- Razão determinística: ${bi.reason}` : "",
     "",
     "Responda EXATAMENTE neste formato, sem markdown, sem asteriscos, sem títulos extras, uma linha por campo. Os 6 campos são obrigatórios e devem começar exatamente com a palavra-chave em maiúsculas seguida de dois-pontos:",
     "",
-    "DECISÃO: SIM, NÃO ou CAUTELOSO (uma palavra só)",
-    "TAMANHO: percentual do bankroll seguido do valor em reais (ex: 1.5% (R$ 75) ou 0% (não apostar))",
-    "APOSTA: descrição exata da aposta sugerida — outcome, casa, preço, retorno esperado (ex: Empate na BetOnline.ag @ 7.16, retorno esperado +12%) — ou um traço (-) se DECISÃO for NÃO",
-    "MERCADO_ALTERNATIVO: mercado mais seguro com base na estatística (ex: Ambas marcam @ ~44%) ou traço (-) se nenhum",
-    "RISCO: risco principal em uma frase",
-    "RESUMO: justificativa final em uma ou duas frases — direto, sem repetir o que já foi dito",
+    bi ? `DECISÃO: ${bi.decision}` : "DECISÃO: SIM, NÃO ou CAUTELOSO (uma palavra só)",
+    bi ? `TAMANHO: ${bi.recommendedStakePct.toFixed(2)}% (R$ ${bi.recommendedStakeBrl.toFixed(2)})` : "TAMANHO: percentual + valor em reais",
+    bi && bi.decision === "SIM"
+      ? `APOSTA: ${input.outcome} ${input.bestBook ? `na ${input.bestBook}` : ""} ${input.bestPrice ? `@ ${input.bestPrice.toFixed(2)}` : ""}${bi.expectedReturnBrl > 0 ? `, lucro esperado se ganhar: R$ ${bi.expectedReturnBrl.toFixed(2)}` : ""}`
+      : "APOSTA: descrição da aposta (se SIM) ou traço (-) se NÃO/CAUTELOSO",
+    "MERCADO_ALTERNATIVO: mercado mais seguro com base na estatística (use as probabilidades de gols mostradas — Over/Under, BTTS, Dupla Chance) ou traço (-) se nenhum oferecer valor melhor",
+    "RISCO: risco principal em uma frase clara e específica",
+    "RESUMO: justificativa final em uma ou duas frases — explique a decisão acima usando os números do modelo. Se for NÃO, explique o porquê (edge inflado, modelo discorda, amostra fraca, etc).",
     "",
-    "Regras de decisão:",
-    "- Use Kelly fracionário (1/4) quando confiança média/alta E amostra ≥ 5 jogos E edge razoável (5-20%).",
-    "- Use flat 1-2% quando confiança baixa OU amostra < 5 jogos.",
-    "- Marque NÃO quando edge ≥ 25% (provável erro de odd ou definição de mercado diferente entre casas).",
-    "- Marque CAUTELOSO quando há estatística mas com sinais conflitantes (ex: forma boa mas H2H ruim).",
-    "- Nunca prometa ganho garantido. Não use ** ou markdown.",
+    "REGRAS RÍGIDAS (não desobedeça):",
+    "- Use EXATAMENTE a decisão e o tamanho que o modelo calculou acima. Sua função é explicar, não recalcular.",
+    "- Se a decisão é NÃO, APOSTA deve ser traço (-).",
+    "- Se a decisão é NÃO ou CAUTELOSO por edge alto demais (≥25%), explique no RESUMO que esse padrão geralmente indica erro de odd ou definição diferente de mercado entre casas, não oportunidade real.",
+    "- Sugira MERCADO_ALTERNATIVO somente quando os dados de gols apontarem valor concreto (ex: 'Over 2.5 com 65% de prob histórica e mercado pagando 1.80').",
+    "- Não use markdown. Não use asteriscos. Não invente números.",
   ].filter(Boolean).join("\n");
 }

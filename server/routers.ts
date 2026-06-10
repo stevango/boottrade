@@ -37,7 +37,7 @@ import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } f
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
-import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch, buildAdvisorPrompt, type AdviseInput } from "./matchAnalysis";
+import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch, buildAdvisorPrompt, computeBetIntelligence, type AdviseInput } from "./matchAnalysis";
 
 // Strip secrets before sending a user to the client.
 function toPublicUser(user: User | null) {
@@ -202,9 +202,13 @@ export const appRouter = router({
             analyzeMatch(input.home, input.away),
             getUserBalance(ctx.user.id),
           ]);
-          const prompt = buildAdvisorPrompt(input as AdviseInput, analysis, bankroll);
+          // Deterministic decision first — math drives the call, the LLM only
+          // narrates. This is what stops the IA from saying CAUTELOSO when
+          // edge is 27% and the right call is plainly NÃO.
+          const intelligence = computeBetIntelligence(input as AdviseInput, analysis, bankroll);
+          const prompt = buildAdvisorPrompt(input as AdviseInput, analysis, bankroll, intelligence);
           const advice = await chatComplete([
-            { role: "system", content: "Você é um consultor de apostas esportivas estatístico, direto e honesto. Nunca prometa ganho garantido. Sempre considere risco de banca. Responda em português, parágrafos curtos e bullets quando ajudar." },
+            { role: "system", content: "Você é um consultor de apostas esportivas. Receba sempre uma decisão DETERMINÍSTICA pré-calculada pelo modelo (DECISÃO, TAMANHO, edge real) e sua função é EXPLICAR essa decisão com os números fornecidos. NUNCA invente outros valores nem desobedeça a decisão. Português, sem markdown." },
             { role: "user", content: prompt },
           ]);
           await addSignalAdvice(ctx.user.id, {
@@ -216,9 +220,9 @@ export const appRouter = router({
             commence: input.commence,
             prompt, advice,
           });
-          return { configured: true as const, advice, error: null };
+          return { configured: true as const, advice, intelligence, error: null };
         } catch (error) {
-          return { configured: true as const, advice: null, error: String(error).slice(0, 300) };
+          return { configured: true as const, advice: null, intelligence: null, error: String(error).slice(0, 300) };
         }
       }),
     adviceHistory: protectedProcedure

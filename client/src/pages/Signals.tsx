@@ -426,6 +426,40 @@ function parseAdvice(text: string): { decisao?: string; tamanho?: string; aposta
   return { ...out, raw: text };
 }
 
+function IntelligencePanel({ bi }: { bi: any }) {
+  const fmt = (n: number | null | undefined, suffix = "%") => n == null ? "—" : `${n.toFixed(1)}${suffix}`;
+  return (
+    <div className="p-3 rounded bg-secondary/40 border border-border">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Matemática da decisão</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+        <Cell label="Nossa prob." value={fmt(bi.ourProbabilityPct)} />
+        <Cell label="Prob. do preço" value={fmt(bi.marketImpliedPct)} />
+        <Cell label="Edge real" value={fmt(bi.ourEdgePct)} tone={bi.ourEdgePct != null && bi.ourEdgePct > 0 ? "profit" : "loss"} />
+        <Cell label="Edge no feed" value={fmt(bi.reportedEdgePct)} />
+        <Cell label="Kelly 1/4" value={bi.kellyPct == null ? "—" : `${bi.kellyPct.toFixed(2)}%`} />
+        <Cell label="Amostra" value={bi.sampleQuality} />
+        <Cell label="Stake R$" value={bi.recommendedStakeBrl > 0 ? `R$ ${bi.recommendedStakeBrl.toFixed(2)}` : "R$ 0"} />
+        <Cell label="Lucro se ganhar" value={bi.expectedReturnBrl > 0 ? `R$ ${bi.expectedReturnBrl.toFixed(2)}` : "—"} tone="profit" />
+      </div>
+      {bi.bullets?.length > 0 && (
+        <ul className="text-[11px] text-muted-foreground mt-2 space-y-0.5">
+          {bi.bullets.map((b: string, i: number) => <li key={i}>• {b}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Cell({ label, value, tone }: { label: string; value: string; tone?: "profit" | "loss" }) {
+  const color = tone === "profit" ? "text-profit" : tone === "loss" ? "text-loss" : "text-foreground";
+  return (
+    <div className="p-2 rounded bg-card">
+      <p className="text-[10px] text-muted-foreground truncate">{label}</p>
+      <p className={`text-xs font-medium ${color}`}>{value}</p>
+    </div>
+  );
+}
+
 function AdviceRender({ text }: { text: string }) {
   const a = parseAdvice(text);
   const decLower = (a.decisao || "").toLowerCase();
@@ -534,6 +568,7 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
       {r?.error && r?.configured !== false && (
         <p className="text-[11px] text-loss">{r.error}</p>
       )}
+      {r?.intelligence && <IntelligencePanel bi={r.intelligence} />}
       {r?.advice && <AdviceRender text={r.advice} />}
 
       {showHistory && past.length > 0 && (
