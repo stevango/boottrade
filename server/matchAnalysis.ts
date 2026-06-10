@@ -39,6 +39,26 @@ export async function testApiFootballConnection(): Promise<{ ok: boolean; messag
   }
 }
 
+// Returns the current daily usage so other code paths can include it in
+// error messages when something might be quota-related.
+async function getQuotaUsage(): Promise<{ current: number; limit: number } | null> {
+  const key = await getApiFootballKey();
+  if (!key) return null;
+  try {
+    const resp = await fetch(`${BASE}/status`, {
+      headers: { "x-apisports-key": key },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => ({})) as { response?: { requests?: { current?: number; limit_day?: number } } };
+    const r = data.response?.requests;
+    if (!r) return null;
+    return { current: r.current ?? 0, limit: r.limit_day ?? 100 };
+  } catch {
+    return null;
+  }
+}
+
 async function call<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
   const key = await getApiFootballKey();
   if (!key) throw new ApiFootballNotConfiguredError();
@@ -88,21 +108,29 @@ export async function resolveTeam(name: string): Promise<{ id: number; name: str
   // 2) exact name match — sometimes the search index misses short names like
   //    "Iraq" or "Iran"
   // 3) country filter — national teams often have country == team name
-  const strategies: Record<string, string | number>[] = [
-    { search: cleaned },
-    { name: cleaned },
-    { country: cleaned },
+  const strategies: { params: Record<string, string | number>; label: string }[] = [
+    { params: { search: cleaned }, label: "search" },
+    { params: { name: cleaned }, label: "name" },
+    { params: { country: cleaned }, label: "country" },
   ];
   let results: ApiTeam[] = [];
-  for (const params of strategies) {
+  const errors: { strategy: string; error: string }[] = [];
+  for (const s of strategies) {
     try {
-      results = await call<ApiTeam[]>("/teams", params);
+      results = await call<ApiTeam[]>("/teams", s.params);
       if (Array.isArray(results) && results.length > 0) break;
     } catch (e) {
-      // Try next strategy; only the last error matters for the caller.
+      errors.push({ strategy: s.label, error: e instanceof Error ? e.message : String(e) });
     }
   }
-  if (!Array.isArray(results) || results.length === 0) return null;
+  if (!Array.isArray(results) || results.length === 0) {
+    // All strategies failed/returned empty. Probe quota so the caller can
+    // tell the user whether it's "team really unknown" vs "out of credits".
+    const quota = await getQuotaUsage();
+    const quotaMsg = quota ? ` (quota: ${quota.current}/${quota.limit} req hoje)` : "";
+    const errSummary = errors.length > 0 ? ` Estratégias falharam: ${errors.map((e) => `${e.strategy}=${e.error.slice(0, 80)}`).join("; ")}` : " Estratégias retornaram vazio.";
+    throw new Error(`Não consegui resolver "${cleaned}"${quotaMsg}.${errSummary}`);
+  }
   // Prefer national teams when multiple matches, then exact-name match.
   const exactNational = results.find((r) => r.team.national && r.team.name.toLowerCase() === cleaned.toLowerCase());
   const anyNational = results.find((r) => r.team.national);
@@ -461,9 +489,12 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
   const cached = analysisCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < ANALYSIS_TTL) return cached.value;
 
-  const [team1, team2] = await Promise.all([resolveTeam(homeName), resolveTeam(awayName)]);
-  if (!team1) throw new Error(`API-Football não encontrou "${homeName}". Tente nome em inglês ou verifique se o plano cobre esta seleção.`);
-  if (!team2) throw new Error(`API-Football não encontrou "${awayName}". Tente nome em inglês ou verifique se o plano cobre esta seleção.`);
+  const [team1, team2] = await Promise.all([
+    resolveTeam(homeName).catch((e) => { throw new Error(`${homeName}: ${e instanceof Error ? e.message : e}`); }),
+    resolveTeam(awayName).catch((e) => { throw new Error(`${awayName}: ${e instanceof Error ? e.message : e}`); }),
+  ]);
+  if (!team1) throw new Error(`API-Football não encontrou "${homeName}".`);
+  if (!team2) throw new Error(`API-Football não encontrou "${awayName}".`);
 
   const [h2h, form1, form2, squad1, squad2] = await Promise.all([
     fetchH2H(team1.id, team2.id),
