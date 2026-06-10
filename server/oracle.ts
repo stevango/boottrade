@@ -65,32 +65,38 @@ function reasoningFor(vb: ValueBet, source: string): string {
   return `[${source}] ${vb.bestPrice.toFixed(2)} @ ${vb.bestBook} vs média ${vb.avgPrice.toFixed(2)} entre ${vb.booksCount} casas (edge ${vb.edgePct.toFixed(1)}%)${when}.`;
 }
 
-async function scanTheOdds(): Promise<{ bets: ValueBet[]; source: string }[]> {
-  if (!(await isOddsConfigured())) return [];
-  const out: { bets: ValueBet[]; source: string }[] = [];
+async function scanTheOdds(): Promise<{ results: { bets: ValueBet[]; source: string }[]; errors: string[]; configured: boolean }> {
+  if (!(await isOddsConfigured())) return { results: [], errors: [], configured: false };
+  const results: { bets: ValueBet[]; source: string }[] = [];
+  const errors: string[] = [];
   for (const sport of DEFAULT_SPORTS_THEODDS) {
     try {
       const { valueBets } = await fetchTheOddsOpportunities({ sport, regions: "eu,uk", markets: "h2h", edgeThresholdPct: MIN_EDGE_PCT });
-      if (valueBets.length > 0) out.push({ bets: valueBets, source: `theOdds:${sport}` });
+      if (valueBets.length > 0) results.push({ bets: valueBets, source: `theOdds:${sport}` });
     } catch (e) {
-      console.warn(`[oracle] theOdds ${sport} failed:`, e instanceof Error ? e.message : e);
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`theOdds:${sport} → ${msg.slice(0, 120)}`);
+      console.warn(`[oracle] theOdds ${sport} failed:`, msg);
     }
   }
-  return out;
+  return { results, errors, configured: true };
 }
 
-async function scanOddsIo(): Promise<{ bets: ValueBet[]; source: string }[]> {
-  if (!(await isOddsIoConfigured())) return [];
-  const out: { bets: ValueBet[]; source: string }[] = [];
+async function scanOddsIo(): Promise<{ results: { bets: ValueBet[]; source: string }[]; errors: string[]; configured: boolean }> {
+  if (!(await isOddsIoConfigured())) return { results: [], errors: [], configured: false };
+  const results: { bets: ValueBet[]; source: string }[] = [];
+  const errors: string[] = [];
   for (const { sport, league } of DEFAULT_LEAGUES_ODDSIO) {
     try {
       const { valueBets } = await fetchOddsIoOpportunities({ sport, league, edgeThresholdPct: MIN_EDGE_PCT });
-      if (valueBets.length > 0) out.push({ bets: valueBets, source: `oddsIo:${league}` });
+      if (valueBets.length > 0) results.push({ bets: valueBets, source: `oddsIo:${league}` });
     } catch (e) {
-      console.warn(`[oracle] oddsIo ${league} failed:`, e instanceof Error ? e.message : e);
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`oddsIo:${league} → ${msg.slice(0, 120)}`);
+      console.warn(`[oracle] oddsIo ${league} failed:`, msg);
     }
   }
-  return out;
+  return { results, errors, configured: true };
 }
 
 // Auto-advisor: after a scan creates new signals, run the consultor on the
@@ -151,9 +157,18 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
   const oracleId = await getOracleRobotId();
   if (oracleId == null) return { userId, created: 0, sources: [], error: "Oracle robot not in catalog" };
 
-  const [theOddsResults, oddsIoResults] = await Promise.all([scanTheOdds(), scanOddsIo()]);
-  const all = [...theOddsResults, ...oddsIoResults];
-  if (all.length === 0) return { userId, created: 0, sources: [], error: "Nenhum feed configurado ou todos falharam" };
+  const [scan1, scan2] = await Promise.all([scanTheOdds(), scanOddsIo()]);
+  const all = [...scan1.results, ...scan2.results];
+  if (all.length === 0) {
+    const parts: string[] = [];
+    if (!scan1.configured) parts.push("The Odds API não configurada");
+    else if (scan1.errors.length > 0) parts.push(`The Odds API falhou: ${scan1.errors[0]}`);
+    else parts.push("The Odds API: sem value bets ≥ 2%");
+    if (!scan2.configured) parts.push("Odds-API.io não configurada");
+    else if (scan2.errors.length > 0) parts.push(`Odds-API.io falhou: ${scan2.errors[0]}`);
+    else parts.push("Odds-API.io: sem value bets ≥ 2%");
+    return { userId, created: 0, sources: [], error: parts.join(" · ") };
+  }
 
   // Flatten + dedupe by (asset). Keep highest edge for each.
   const seen = new Map<string, { bet: ValueBet; source: string }>();
