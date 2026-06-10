@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Plug2, Link2, CheckCircle, AlertCircle, RefreshCw, Trash2, Shield, Loader2,
   Brain, Radar, Bitcoin, Trophy, Landmark, Clock, Save, X as XIcon, Zap, Info,
+  Sparkles, Bot,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
@@ -281,6 +283,10 @@ export default function Integrations() {
           {AUTOMATION.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
+        <Section title="Comportamento dos Robôs" icon={Bot}>
+          <OracleAutoAdviseCard isAdmin={isAdmin} />
+        </Section>
+
         <Card className="bg-card border-primary/20">
           <CardContent className="p-5 flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Shield className="w-5 h-5 text-primary" /></div>
@@ -514,6 +520,86 @@ function ConnectableCard({ item, onConnect }: { item: Connectable; onConnect: ()
         <Button size="sm" variant="outline" className="w-full text-xs mt-3" onClick={onConnect}>
           <Link2 className="w-3 h-3 mr-1" /> Conectar
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OracleAutoAdviseCard({ isAdmin }: { isAdmin: boolean }) {
+  const cfg = trpc.oracleConfig.get.useQuery();
+  const utils = trpc.useUtils();
+  const setMut = trpc.oracleConfig.set.useMutation({
+    onSuccess: () => { toast.success("Configuração salva."); utils.oracleConfig.get.invalidate(); },
+    onError: () => toast.error("Falha ao salvar."),
+  });
+  const enabled = cfg.data?.autoAdviseEnabled ?? true;
+  const topN = cfg.data?.autoAdviseTopN ?? 5;
+  // Quota napkin math: each advised signal burns ~9 API-Football calls + 1
+  // LLM call. With Oracle ticking every hour, a daily quota of 100 calls on
+  // the free plan supports roughly floor(100/9) ≈ 11 advised signals total
+  // per 24h. We surface the math so the admin can size topN sanely.
+  const dailyAfCalls = enabled ? topN * 9 * 24 : 0;
+
+  return (
+    <Card className="bg-card border-border sm:col-span-2 lg:col-span-3">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base text-foreground flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-primary" /> Auto-orientação do Oracle AI
+          {enabled
+            ? <Badge variant="outline" className="bg-profit/10 text-profit border-profit/20 text-[10px]">Ativo</Badge>
+            : <Badge variant="outline" className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20 text-[10px]">Desligado</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          A cada varredura do Oracle (de hora em hora), o consultor IA gera automaticamente uma recomendação SIM/NÃO/CAUTELOSO
+          pros sinais com maior edge — você abre o app e já encontra a leitura pronta.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <Label className="text-sm text-foreground">Ativar auto-orientação</Label>
+            <p className="text-[11px] text-muted-foreground">Quando desligado, o consultor só roda quando você clicar em "Pedir orientação".</p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={(v) => setMut.mutate({ autoAdviseEnabled: v })}
+            disabled={!isAdmin || setMut.isPending}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <Label className="text-sm text-foreground">Sinais auto-orientados por varredura</Label>
+            <Badge variant="outline" className="text-xs">{topN} sinais</Badge>
+          </div>
+          <input
+            type="range" min="0" max="10" step="1" value={topN}
+            onChange={(e) => setMut.mutate({ autoAdviseTopN: parseInt(e.target.value, 10) })}
+            disabled={!isAdmin || setMut.isPending || !enabled}
+            className="w-full accent-primary disabled:opacity-50"
+          />
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>0 (manual)</span><span>5 (padrão)</span><span>10 (máx)</span>
+          </div>
+        </div>
+
+        <div className="p-3 rounded bg-warning/5 border border-warning/20">
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            <strong className="text-foreground">Consumo de quota estimado:</strong> com {topN} sinais auto-orientados a cada hora,
+            o servidor faz ~{dailyAfCalls} chamadas/dia na API-Football e ~{enabled ? topN * 24 : 0} no LLM (OpenAI).
+            {dailyAfCalls > 100 && (
+              <>
+                {" "}<strong className="text-warning">Atenção:</strong> o plano free da API-Football tem limite de 100 req/dia. Reduza pra {Math.floor(100 / (9 * 24))} sinais
+                ou faça upgrade pra evitar erro de quota.
+              </>
+            )}
+            {!enabled && " Apenas chamadas manuais (botão 'Pedir orientação') consomem quota."}
+          </p>
+        </div>
+
+        {!isAdmin && (
+          <p className="text-[11px] text-muted-foreground italic">Apenas administradores podem alterar essa configuração.</p>
+        )}
       </CardContent>
     </Card>
   );

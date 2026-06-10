@@ -3,7 +3,7 @@
 // it on the "Sinais ao Vivo" page and the robot brain can learn from the
 // outcome (won/lost) over time.
 
-import { addBrainDecision, getDb, resolveDecision, getUserBalance, addSignalAdvice } from "./db";
+import { addBrainDecision, getDb, resolveDecision, getUserBalance, addSignalAdvice, getAppSetting } from "./db";
 import { robots, userRobots, brainDecisions } from "../drizzle/schema";
 import { and, eq, gte } from "drizzle-orm";
 import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetchScores, type ScoreEvent } from "./oddsData";
@@ -95,8 +95,18 @@ async function scanOddsIo(): Promise<{ bets: ValueBet[]; source: string }[]> {
 
 // Auto-advisor: after a scan creates new signals, run the consultor on the
 // top N by edge so the user opens /signals already finding recommendations.
-// Quota-bounded: 1 LLM + 3 API-Football calls per advised signal.
-const AUTO_ADVISE_TOP_N = 5;
+// Quota-bounded: 1 LLM + ~9 API-Football calls per advised signal. The
+// admin can toggle this off (AUTO_ADVISE_ENABLED=false) or change N
+// (AUTO_ADVISE_TOP_N=0..10) from /integrations without redeploy.
+const AUTO_ADVISE_TOP_N_DEFAULT = 5;
+
+async function getAutoAdviseConfig(): Promise<{ enabled: boolean; topN: number }> {
+  const enabledRaw = await getAppSetting("AUTO_ADVISE_ENABLED");
+  const topNRaw = await getAppSetting("AUTO_ADVISE_TOP_N");
+  const enabled = enabledRaw == null ? true : enabledRaw.toLowerCase() !== "false";
+  const topN = topNRaw ? Math.max(0, Math.min(10, parseInt(topNRaw, 10) || AUTO_ADVISE_TOP_N_DEFAULT)) : AUTO_ADVISE_TOP_N_DEFAULT;
+  return { enabled, topN };
+}
 
 async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBet, source: string, bankroll: number): Promise<boolean> {
   try {
@@ -175,13 +185,16 @@ export async function runOracleForUser(userId: number): Promise<OracleResult> {
   }
 
   // Auto-orientação: run the consultor on the top N edges if both API-Football
-  // and the LLM are configured. Fire-and-forget so the scan doesn't block on
-  // it; quota is bounded by AUTO_ADVISE_TOP_N (default 5 per user per tick).
+  // and the LLM are configured AND admin hasn't disabled it. Fire-and-forget
+  // so the scan doesn't block; N is read from app_settings each tick so the
+  // admin's slider takes effect immediately.
   void (async () => {
     if (insertedForAdvise.length === 0) return;
+    const cfg = await getAutoAdviseConfig();
+    if (!cfg.enabled || cfg.topN === 0) return;
     if (!(await isApiFootballConfigured()) || !(await isLLMConfigured())) return;
     const bankroll = await getUserBalance(userId);
-    const top = insertedForAdvise.slice(0, AUTO_ADVISE_TOP_N);
+    const top = insertedForAdvise.slice(0, cfg.topN);
     let advised = 0;
     for (const { decisionId, bet, source } of top) {
       if (await autoAdviseSignal(userId, decisionId, bet, source, bankroll)) advised++;

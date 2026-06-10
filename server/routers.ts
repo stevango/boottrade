@@ -26,7 +26,7 @@ import {
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
   getUserByEmail, createLocalUser, createBacktest,
   getWatchlist, addWatchlistItem, removeWatchlistItem, getSystemStats,
-  getAppSettingMeta, setAppSetting, deleteAppSetting, promoteToAdminIfNoAdmin
+  getAppSetting, getAppSettingMeta, setAppSetting, deleteAppSetting, promoteToAdminIfNoAdmin
 } from "./db";
 import { chatComplete, isLLMConfigured, testLLMConnection } from "./llm";
 import { rateLimit } from "./rateLimit";
@@ -143,6 +143,26 @@ export const appRouter = router({
     setBalance: protectedProcedure
       .input(z.object({ balance: z.number().min(0).max(100_000_000) }))
       .mutation(async ({ ctx, input }) => setUserBalance(ctx.user.id, input.balance)),
+  }),
+
+  oracleConfig: router({
+    // Auto-orientação behavior toggles. Stored in app_settings so admin can
+    // tune them from /integrations without touching code or env vars.
+    get: protectedProcedure.query(async () => {
+      const enabled = await getAppSetting("AUTO_ADVISE_ENABLED");
+      const topN = await getAppSetting("AUTO_ADVISE_TOP_N");
+      return {
+        autoAdviseEnabled: enabled == null ? true : enabled.toLowerCase() !== "false",
+        autoAdviseTopN: topN ? Math.max(0, Math.min(10, parseInt(topN, 10) || 5)) : 5,
+      };
+    }),
+    set: adminProcedure
+      .input(z.object({ autoAdviseEnabled: z.boolean().optional(), autoAdviseTopN: z.number().min(0).max(10).optional() }))
+      .mutation(async ({ input }) => {
+        if (input.autoAdviseEnabled != null) await setAppSetting("AUTO_ADVISE_ENABLED", input.autoAdviseEnabled ? "true" : "false");
+        if (input.autoAdviseTopN != null) await setAppSetting("AUTO_ADVISE_TOP_N", String(input.autoAdviseTopN));
+        return { success: true };
+      }),
   }),
 
   matchAnalysis: router({
@@ -734,17 +754,17 @@ export const appRouter = router({
     // App-wide settings management. Keys are whitelisted so the UI can't
     // overwrite arbitrary config. Values are stored encrypted (AES-256-GCM).
     getSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]) }))
       .query(async ({ input }) => {
         return getAppSettingMeta(input.key);
       }),
     setSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]), value: z.string().min(1).max(512) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]), value: z.string().min(1).max(512) }))
       .mutation(async ({ input }) => {
         return setAppSetting(input.key, input.value.trim());
       }),
     clearSetting: adminProcedure
-      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN"]) }))
+      .input(z.object({ key: z.enum(["ODDS_API_KEY", "ODDS_IO_API_KEY", "API_FOOTBALL_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "BRAPI_TOKEN", "AUTO_ADVISE_ENABLED", "AUTO_ADVISE_TOP_N"]) }))
       .mutation(async ({ input }) => {
         return deleteAppSetting(input.key);
       }),
