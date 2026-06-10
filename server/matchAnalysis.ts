@@ -52,7 +52,14 @@ async function call<T>(path: string, params: Record<string, string | number> = {
     const text = await resp.text().catch(() => "");
     throw new Error(`API-Football ${resp.status}: ${text.slice(0, 200)}`);
   }
-  const data = await resp.json() as { response?: T; errors?: unknown };
+  const data = await resp.json() as { response?: T; errors?: unknown; results?: number };
+  // API-Football returns 200 OK with errors in the body when the request is
+  // bad (invalid params, quota exceeded, plan-restricted endpoint). Surface
+  // these so the caller doesn't get a silent empty array.
+  if (data.errors && typeof data.errors === "object" && Object.keys(data.errors).length > 0) {
+    const first = Object.values(data.errors)[0];
+    throw new Error(`API-Football erro: ${String(first).slice(0, 200)}`);
+  }
   return (data.response ?? ([] as unknown as T));
 }
 
@@ -67,6 +74,9 @@ const TEAM_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // Resolves a free-text team name to an api-football team id, preferring
 // national teams since the value-bet feed is mostly World Cup matches.
+// Tries multiple search strategies: search by query string, exact name,
+// and search by country (national teams have country == name for most
+// FIFA members). Returns null only if every strategy returns nothing.
 export async function resolveTeam(name: string): Promise<{ id: number; name: string; logo: string } | null> {
   const cleaned = name.trim();
   if (!cleaned) return null;
@@ -74,11 +84,30 @@ export async function resolveTeam(name: string): Promise<{ id: number; name: str
   const cached = teamCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < TEAM_CACHE_TTL) return { id: cached.id, name: cached.name, logo: cached.logo };
 
-  const results = await call<ApiTeam[]>("/teams", { search: cleaned });
+  // 1) free-text search — works for clubs and named national sides
+  // 2) exact name match — sometimes the search index misses short names like
+  //    "Iraq" or "Iran"
+  // 3) country filter — national teams often have country == team name
+  const strategies: Record<string, string | number>[] = [
+    { search: cleaned },
+    { name: cleaned },
+    { country: cleaned },
+  ];
+  let results: ApiTeam[] = [];
+  for (const params of strategies) {
+    try {
+      results = await call<ApiTeam[]>("/teams", params);
+      if (Array.isArray(results) && results.length > 0) break;
+    } catch (e) {
+      // Try next strategy; only the last error matters for the caller.
+    }
+  }
   if (!Array.isArray(results) || results.length === 0) return null;
-  // Prefer national teams when multiple matches.
-  const nat = results.find((r) => r.team.national);
-  const t = (nat ?? results[0]).team;
+  // Prefer national teams when multiple matches, then exact-name match.
+  const exactNational = results.find((r) => r.team.national && r.team.name.toLowerCase() === cleaned.toLowerCase());
+  const anyNational = results.find((r) => r.team.national);
+  const exactName = results.find((r) => r.team.name.toLowerCase() === cleaned.toLowerCase());
+  const t = (exactNational ?? anyNational ?? exactName ?? results[0]).team;
   const value = { id: t.id, name: t.name, logo: t.logo };
   teamCache.set(cacheKey, { ...value, fetchedAt: Date.now() });
   return value;
@@ -408,8 +437,8 @@ export async function analyzeMatch(homeName: string, awayName: string): Promise<
   if (cached && Date.now() - cached.fetchedAt < ANALYSIS_TTL) return cached.value;
 
   const [team1, team2] = await Promise.all([resolveTeam(homeName), resolveTeam(awayName)]);
-  if (!team1) throw new Error(`Time não encontrado: ${homeName}`);
-  if (!team2) throw new Error(`Time não encontrado: ${awayName}`);
+  if (!team1) throw new Error(`API-Football não encontrou "${homeName}". Tente nome em inglês ou verifique se o plano cobre esta seleção.`);
+  if (!team2) throw new Error(`API-Football não encontrou "${awayName}". Tente nome em inglês ou verifique se o plano cobre esta seleção.`);
 
   const [h2h, form1, form2, squad1, squad2] = await Promise.all([
     fetchH2H(team1.id, team2.id),
