@@ -33,11 +33,15 @@ const outcomeColor: Record<string, string> = {
   loss: "bg-loss/10 text-loss border-loss/30",
   neutral: "bg-secondary text-muted-foreground border-border",
 };
+// outcomeLabel maps DB outcome value → display. "profit"/"loss" can mean
+// EITHER the robot's prediction was correct/wrong OR the user actually
+// bet and won/lost. profitAmount > 0 distinguishes the two; we render a
+// richer label based on that below.
 const outcomeLabel: Record<string, string> = {
-  pending: "Sugestão pendente",
-  profit: "Apostei • Ganhei",
-  loss: "Apostei • Perdi",
-  neutral: "Não apostei",
+  pending: "Aguardando jogo",
+  profit: "Robô acertou",
+  loss: "Robô errou",
+  neutral: "Ignorado",
 };
 
 export default function Signals() {
@@ -135,10 +139,11 @@ export default function Signals() {
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
               <Zap className="w-7 h-7 text-primary" /> Sugestões de Apostas (Sinais)
             </h1>
-            <p className="text-muted-foreground text-sm">
-              Os robôs geram <strong>sugestões</strong> — não apostas. Se você fez a aposta na casa,
-              marque "Apostei e Ganhei" ou "Apostei e Perdi". Se ignorou a sugestão (a maioria),
-              use "Não apostei" pra limpar.
+            <p className="text-muted-foreground text-sm leading-relaxed max-w-3xl">
+              Robôs geram <strong>sugestões</strong> — não apostas reais. Após cada jogo, o sistema
+              consulta o placar e marca automaticamente se a previsão acertou ou errou (isso vira a
+              <strong> Acurácia do Oracle</strong>). Você só precisa clicar nos botões pra apostas
+              que botou dinheiro de verdade.
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -482,21 +487,43 @@ function PnlAndExposurePanel() {
   const betsPct = e.dailyMaxBets > 0 ? Math.min(100, (e.betsToday / e.dailyMaxBets) * 100) : 0;
 
   return (
-    <div className="grid sm:grid-cols-2 gap-3">
+    <div className="grid lg:grid-cols-3 gap-3">
+      <Card className="bg-card border-border">
+        <CardContent className="p-4">
+          <p className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
+            <Bot className="w-4 h-4 text-primary" /> Acurácia do Oracle
+            <span title="Mede só a previsão do robô — independe de você ter apostado. Sistema marca automaticamente após cada jogo via The Odds API."
+              className="text-muted-foreground cursor-help text-[10px]">ⓘ</span>
+          </p>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <AccuracyCell label="Hoje" acc={p.day.predAccuracy} correct={p.day.predCorrect} wrong={p.day.predWrong} pending={p.day.predPending} />
+            <AccuracyCell label="7 dias" acc={p.week.predAccuracy} correct={p.week.predCorrect} wrong={p.week.predWrong} pending={p.week.predPending} />
+            <AccuracyCell label="Total" acc={p.all.predAccuracy} correct={p.all.predCorrect} wrong={p.all.predWrong} pending={p.all.predPending} />
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            <strong className="text-foreground">{p.all.predPending}</strong> sugestões aguardando jogo acontecer — sistema marca automaticamente.
+          </p>
+        </CardContent>
+      </Card>
+
       <Card className="bg-card border-border">
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-foreground flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> P&L de apostas</p>
+            <p className="text-sm font-medium text-foreground flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-primary" /> Meu P&L real
+              <span title="Só conta apostas onde você marcou 'Apostei • Ganhei/Perdi' com valor > R$ 0."
+                className="text-muted-foreground cursor-help text-[10px]">ⓘ</span>
+            </p>
             <a href="/recommendations" className="text-[11px] text-primary hover:underline">Histórico</a>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center">
-            <PnlCell label="Hoje" net={p.day.net} settled={p.day.settled} winRate={p.day.winRatePct} tone={tone(p.day.net)} fmt={fmt} />
-            <PnlCell label="7 dias" net={p.week.net} settled={p.week.settled} winRate={p.week.winRatePct} tone={tone(p.week.net)} fmt={fmt} />
-            <PnlCell label="30 dias" net={p.month.net} settled={p.month.settled} winRate={p.month.winRatePct} tone={tone(p.month.net)} fmt={fmt} />
+            <PnlCell label="Hoje" net={p.day.userNet} settled={p.day.userBets} winRate={p.day.userWinRate} tone={tone(p.day.userNet)} fmt={fmt} />
+            <PnlCell label="7 dias" net={p.week.userNet} settled={p.week.userBets} winRate={p.week.userWinRate} tone={tone(p.week.userNet)} fmt={fmt} />
+            <PnlCell label="30 dias" net={p.month.userNet} settled={p.month.userBets} winRate={p.month.userWinRate} tone={tone(p.month.userNet)} fmt={fmt} />
           </div>
-          {p.day.pending > 0 && (
-            <p className="text-[11px] text-muted-foreground mt-2 text-center">
-              {p.day.pending} aposta(s) pendente(s) de marcar resultado
+          {p.all.userBets === 0 && (
+            <p className="text-[11px] text-muted-foreground mt-2">
+              Nenhuma aposta sua registrada ainda. P&L só conta o que você apostou de verdade.
             </p>
           )}
         </CardContent>
@@ -551,7 +578,20 @@ function PnlCell({ label, net, settled, winRate, tone, fmt }: { label: string; n
     <div className="p-2 rounded bg-secondary/40">
       <p className="text-[10px] text-muted-foreground">{label}</p>
       <p className={`text-sm font-bold ${tone}`}>{net >= 0 ? "+" : ""}{fmt(net)}</p>
-      <p className="text-[10px] text-muted-foreground">{settled} jogos · {winRate.toFixed(0)}% win</p>
+      <p className="text-[10px] text-muted-foreground">{settled} aposta(s) · {winRate.toFixed(0)}% win</p>
+    </div>
+  );
+}
+
+function AccuracyCell({ label, acc, correct, wrong, pending }: { label: string; acc: number; correct: number; wrong: number; pending: number }) {
+  const tone = acc >= 60 ? "text-profit" : acc >= 50 ? "text-warning" : acc > 0 ? "text-loss" : "text-muted-foreground";
+  return (
+    <div className="p-2 rounded bg-secondary/40">
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p className={`text-sm font-bold ${tone}`}>{(correct + wrong) > 0 ? `${acc.toFixed(0)}%` : "—"}</p>
+      <p className="text-[10px] text-muted-foreground">
+        {correct}✓ · {wrong}✗{pending > 0 ? ` · ${pending}⏳` : ""}
+      </p>
     </div>
   );
 }
@@ -863,6 +903,11 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <Badge variant="outline" className="bg-profit/10 text-profit border-profit/30 text-[10px]">+{conf.toFixed(1)}%</Badge>
             <Badge variant="outline" className={`text-[10px] ${outcomeColor[s.outcome]}`}>{outcomeLabel[s.outcome]}</Badge>
+            {parseFloat(s.profitAmount ?? "0") > 0 && (
+              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">
+                Apostei R$ {parseFloat(s.profitAmount ?? "0").toFixed(2)}
+              </Badge>
+            )}
             {hasAdvice && (
               <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]" title="O consultor IA já gerou uma recomendação automática pra este sinal — clique em Analisar partida pra ver">
                 <Sparkles className="w-2.5 h-2.5 mr-1" /> orientado

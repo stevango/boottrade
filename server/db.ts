@@ -1072,29 +1072,59 @@ export async function setCachedTeam(query: string, tId: number, tName: string, l
   }
 }
 
-// P&L summary for sports betting. Sums brain_decisions outcomes scoped to
-// the user across day/week/month buckets so the user can see how the bot
-// is doing without exporting anything.
+// P&L summary for sports betting. Distinguishes ROBOT prediction accuracy
+// (every settled signal counts, regardless of whether the user actually
+// bet) from USER's real money P&L (only signals where profitAmount > 0).
 export async function getBettingPnl(userId: number) {
   const db = await getDb();
   if (!db) return null;
   const day = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const all = new Date(0);
   const rows = await db.select().from(brainDecisions).where(eq(brainDecisions.userId, userId));
   const reduce = (since: Date) => {
-    let profit = 0, loss = 0, wins = 0, losses = 0, neutrals = 0, pending = 0;
+    // Robot prediction quality (any settled signal counts).
+    let predCorrect = 0, predWrong = 0, predSkipped = 0, predPending = 0;
+    // User's actual money P&L (only where the user marked with a stake > 0).
+    let userProfit = 0, userLoss = 0, userBets = 0;
     for (const r of rows) {
       if (new Date(r.createdAt).getTime() < since.getTime()) continue;
-      if (r.outcome === "profit") { wins++; profit += parseFloat(String(r.profitAmount || "0")); }
-      else if (r.outcome === "loss") { losses++; loss += parseFloat(String(r.profitAmount || "0")); }
-      else if (r.outcome === "neutral") neutrals++;
-      else pending++;
+      const amt = parseFloat(String(r.profitAmount || "0"));
+      if (r.outcome === "profit") {
+        predCorrect++;
+        if (amt > 0) { userBets++; userProfit += amt; }
+      } else if (r.outcome === "loss") {
+        predWrong++;
+        if (amt > 0) { userBets++; userLoss += amt; }
+      } else if (r.outcome === "neutral") {
+        predSkipped++;
+      } else {
+        predPending++;
+      }
     }
-    const settled = wins + losses + neutrals;
-    return { profit, loss, net: profit - loss, wins, losses, neutrals, pending, settled, winRatePct: settled > 0 ? (wins / settled) * 100 : 0 };
+    const settled = predCorrect + predWrong;
+    const predAccuracy = settled > 0 ? (predCorrect / settled) * 100 : 0;
+    const userNet = userProfit - userLoss;
+    const userWinRate = userBets > 0
+      ? // user won out of user-placed bets only
+        ((rows.filter((r) => {
+          if (new Date(r.createdAt).getTime() < since.getTime()) return false;
+          return r.outcome === "profit" && parseFloat(String(r.profitAmount || "0")) > 0;
+        }).length) / userBets) * 100
+      : 0;
+    return {
+      // Robot performance
+      predCorrect, predWrong, predSkipped, predPending, settled, predAccuracy,
+      // User real-money P&L
+      userProfit, userLoss, userNet, userBets, userWinRate,
+      // Aliases kept for backward compat with existing UI bindings.
+      profit: userProfit, loss: userLoss, net: userNet,
+      wins: predCorrect, losses: predWrong, neutrals: predSkipped, pending: predPending,
+      winRatePct: predAccuracy,
+    };
   };
-  return { day: reduce(day), week: reduce(week), month: reduce(month) };
+  return { day: reduce(day), week: reduce(week), month: reduce(month), all: reduce(all) };
 }
 
 // Daily exposure tracker: sums recommended stakes from advice rows created
