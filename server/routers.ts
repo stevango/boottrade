@@ -21,7 +21,7 @@ import {
   updateRiskSettings, toggleRobotMode, resolveDecision, getAggregatedPnl,
   addSignalAdvice, getSignalAdviceHistory, getSignalAdviceForDecision,
   getUserBalance, setUserBalance, getBettingPnl, getDailyExposure,
-  expireStalePendingDecisions,
+  expireStalePendingDecisions, getSimulatedPnl,
   getPortfolioSummary, getTradesSummary, getGoalProjections,
   getBrokerConnections, addBrokerConnection, removeBrokerConnection, syncBrokerConnection,
   getPaperTrades, getPaperStats, openPaperTrade, closePaperTrade, resetPaperTrades,
@@ -272,6 +272,7 @@ export const appRouter = router({
         return expireStalePendingDecisions(ctx.user.id, null, input?.maxAgeDays ?? 2);
       }),
     pnl: protectedProcedure.query(async ({ ctx }) => getBettingPnl(ctx.user.id)),
+    simulatedPnl: protectedProcedure.query(async ({ ctx }) => getSimulatedPnl(ctx.user.id)),
     exposure: protectedProcedure.query(async ({ ctx }) => {
       const [exp, bankroll, enabled, maxBets, maxStakePct] = await Promise.all([
         getDailyExposure(ctx.user.id),

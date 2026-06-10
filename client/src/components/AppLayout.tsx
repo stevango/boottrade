@@ -38,6 +38,7 @@ const navItems = [
   { path: "/allocator", label: "Alocação IA", icon: PieChart },
   { path: "/opportunities", label: "Oportunidades", icon: Radar },
   { path: "/signals", label: "Sinais ao Vivo", icon: Zap },
+  { path: "/simulation", label: "Simulação do Robô", icon: FlaskConical },
   { path: "/recommendations", label: "Recomendações IA", icon: Sparkles },
   { path: "/pnl", label: "P&L", icon: BarChart3 },
   { path: "/backtest", label: "Backtest", icon: FlaskConical },

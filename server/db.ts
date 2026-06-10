@@ -1127,7 +1127,74 @@ export async function getBettingPnl(userId: number) {
   return { day: reduce(day), week: reduce(week), month: reduce(month), all: reduce(all) };
 }
 
-// Daily exposure tracker: sums recommended stakes from advice rows created
+// Simulated P&L: "if I had followed every SIM recommendation with the
+// stake the advisor suggested, what would my P&L be?". Joins brain_decisions
+// (for the actual outcome) with signal_advice (for the bestPrice and the
+// stake the advisor recommended), then computes the hypothetical result.
+//
+// Only counts SIM recommendations that have settled (profit/loss). Pending
+// signals are ignored, neutral (user skipped) and signals without advice
+// (advisor didn't run) are also ignored — we'd be guessing the stake.
+export async function getSimulatedPnl(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select({
+    decisionId: brainDecisions.id,
+    outcome: brainDecisions.outcome,
+    createdAt: brainDecisions.createdAt,
+    home: signalAdvice.home,
+    away: signalAdvice.away,
+    market: signalAdvice.market,
+    outcomeBet: signalAdvice.outcome,
+    bestPrice: signalAdvice.bestPrice,
+    bestBook: signalAdvice.bestBook,
+    decision: signalAdvice.decision,
+    recommendedStakeBrl: signalAdvice.recommendedStakeBrl,
+  })
+    .from(brainDecisions)
+    .innerJoin(signalAdvice, eq(signalAdvice.decisionId, brainDecisions.id))
+    .where(eq(brainDecisions.userId, userId));
+
+  const day = Date.now() - 24 * 60 * 60 * 1000;
+  const week = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const month = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  const reduce = (since: number) => {
+    let staked = 0, profit = 0, loss = 0;
+    let correct = 0, wrong = 0;
+    const items: { decisionId: number; match: string; outcomeBet: string; bestBook: string | null; bestPrice: number; stake: number; outcome: string; pnl: number; createdAt: Date }[] = [];
+    for (const r of rows) {
+      if (!r.createdAt || new Date(r.createdAt).getTime() < since) continue;
+      if (r.decision !== "SIM") continue;
+      const stake = parseFloat(String(r.recommendedStakeBrl || "0"));
+      const price = parseFloat(String(r.bestPrice || "0"));
+      if (stake <= 0 || price <= 1) continue;
+      if (r.outcome === "profit") {
+        const pnl = stake * (price - 1);
+        staked += stake; profit += pnl; correct++;
+        items.push({ decisionId: r.decisionId, match: `${r.home} × ${r.away}`, outcomeBet: r.outcomeBet, bestBook: r.bestBook, bestPrice: price, stake, outcome: "won", pnl, createdAt: r.createdAt });
+      } else if (r.outcome === "loss") {
+        const pnl = -stake;
+        staked += stake; loss += stake; wrong++;
+        items.push({ decisionId: r.decisionId, match: `${r.home} × ${r.away}`, outcomeBet: r.outcomeBet, bestBook: r.bestBook, bestPrice: price, stake, outcome: "lost", pnl, createdAt: r.createdAt });
+      }
+    }
+    const settled = correct + wrong;
+    const net = profit - loss;
+    return {
+      staked,
+      profit,
+      loss,
+      net,
+      roiPct: staked > 0 ? (net / staked) * 100 : 0,
+      correct, wrong, settled,
+      accuracyPct: settled > 0 ? (correct / settled) * 100 : 0,
+      items: items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 50),
+    };
+  };
+
+  return { day: reduce(day), week: reduce(week), month: reduce(month), all: reduce(0) };
+}
 // today, scoped to the user, where the advisor said SIM. Used by the UI to
 // show "you've already committed R$ X today" and warn before exceeding a
 // configured cap.

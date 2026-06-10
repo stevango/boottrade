@@ -143,7 +143,8 @@ export default function Signals() {
               Robôs geram <strong>sugestões</strong> — não apostas reais. Após cada jogo, o sistema
               consulta o placar e marca automaticamente se a previsão acertou ou errou (isso vira a
               <strong> Acurácia do Oracle</strong>). Você só precisa clicar nos botões pra apostas
-              que botou dinheiro de verdade.
+              que botou dinheiro de verdade.{" "}
+              <a href="/simulation" className="text-primary underline">Ver simulação do robô →</a>
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
