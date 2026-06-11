@@ -5,7 +5,7 @@ import {
   marketplaceListings, socialPosts, copyTrades, userRobots,
   robotBrain, brainDecisions, portfolioAssets, financialGoals,
   aiConversations, dailyPnl, brokerConnections, watchlist, appSettings,
-  signalAdvice, teamCache
+  signalAdvice, teamCache, bets
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret } from './crypto';

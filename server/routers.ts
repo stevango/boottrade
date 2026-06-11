@@ -38,6 +38,10 @@ import { isMarketDataConfigured, fetchDailyHistory, testMarketDataConnection } f
 import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
+import { placeBetForSignal, settleBetfairBetsForUser, isAutoBetEnabled, getAutoBetMaxStakeBrl, setAutoBetConfig, findMarketForSignal } from "./betfairExecutor";
+import { bets as betsTable } from "../drizzle/schema";
+import { eq as drizzleEq, desc as drizzleDesc } from "drizzle-orm";
+import { getDb as getDrizzleDb } from "./db";
 import { isApiFootballConfigured, testApiFootballConnection, analyzeMatch, buildAdvisorPrompt, computeBetIntelligence, type AdviseInput } from "./matchAnalysis";
 
 // Strip secrets before sending a user to the client.
@@ -175,6 +179,42 @@ export const appRouter = router({
         if (input.dailyMaxStakePct != null) await setAppSetting("DAILY_MAX_STAKE_PCT", String(input.dailyMaxStakePct));
         return { success: true };
       }),
+  }),
+
+  betfair: router({
+    autoConfig: protectedProcedure.query(async () => ({
+      enabled: await isAutoBetEnabled(),
+      maxStakeBrl: await getAutoBetMaxStakeBrl(),
+    })),
+    setAutoConfig: adminProcedure
+      .input(z.object({ enabled: z.boolean().optional(), maxStakeBrl: z.number().min(0).max(10000).optional() }))
+      .mutation(async ({ input }) => {
+        await setAutoBetConfig(input.enabled, input.maxStakeBrl);
+        return { success: true };
+      }),
+    placeOneClick: protectedProcedure
+      .input(z.object({
+        decisionId: z.number().optional(),
+        adviceId: z.number().optional(),
+        home: z.string().min(1).max(100),
+        away: z.string().min(1).max(100),
+        market: z.string().min(1).max(60),
+        outcome: z.string().min(1).max(100),
+        bestPrice: z.number().min(1.01).max(1000),
+        stake: z.number().min(0.01).max(10000),
+        commence: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return placeBetForSignal({ ...input, userId: ctx.user.id, source: "betfair_oneClick" });
+      }),
+    listBets: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const db = await getDrizzleDb();
+        if (!db) return [];
+        return db.select().from(betsTable).where(drizzleEq(betsTable.userId, ctx.user.id)).orderBy(drizzleDesc(betsTable.placedAt)).limit(input?.limit ?? 50);
+      }),
+    settleNow: protectedProcedure.mutation(async ({ ctx }) => settleBetfairBetsForUser(ctx.user.id)),
   }),
 
   matchAnalysis: router({

@@ -285,6 +285,7 @@ export default function Integrations() {
 
         <Section title="Comportamento dos Robôs" icon={Bot}>
           <OracleAutoAdviseCard isAdmin={isAdmin} />
+          <BetfairAutoBetCard isAdmin={isAdmin} />
         </Section>
 
         <Card className="bg-card border-primary/20">
@@ -639,6 +640,79 @@ function OracleAutoAdviseCard({ isAdmin }: { isAdmin: boolean }) {
               <span>0%</span><span>10% (recomendado)</span><span>30%</span>
             </div>
           </div>
+        </div>
+
+        {!isAdmin && (
+          <p className="text-[11px] text-muted-foreground italic">Apenas administradores podem alterar essa configuração.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BetfairAutoBetCard({ isAdmin }: { isAdmin: boolean }) {
+  const cfg = trpc.betfair.autoConfig.useQuery();
+  const utils = trpc.useUtils();
+  const setMut = trpc.betfair.setAutoConfig.useMutation({
+    onSuccess: () => { toast.success("Configuração salva."); utils.betfair.autoConfig.invalidate(); },
+    onError: () => toast.error("Falha ao salvar."),
+  });
+  const enabled = cfg.data?.enabled ?? false;
+  const maxStake = cfg.data?.maxStakeBrl ?? 10;
+
+  return (
+    <Card className="bg-card border-border sm:col-span-2 lg:col-span-3">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base text-foreground flex items-center gap-2">
+          ⚡ Auto-execução Betfair
+          {enabled
+            ? <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20 text-[10px]">DINHEIRO REAL ATIVO</Badge>
+            : <Badge variant="outline" className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20 text-[10px]">Desligado</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Quando ligado: cada sinal com decisão <strong>SIM</strong> dispara uma aposta real na Betfair Brasil automaticamente.
+          Requer: integração Betfair conectada + saldo + mercado MATCH_ODDS correspondente disponível.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="p-3 rounded bg-loss/5 border border-loss/30">
+          <p className="text-[11px] text-foreground font-medium">⚠️ Aviso de risco</p>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Auto-bet usa <strong>dinheiro real</strong>. Comece com <strong>modo cobaia</strong> (R$ 1-10) por 1-2 semanas pra validar.
+            Sistema pode falhar (rede, API, mercado fechado) — apostas que falham ficam registradas com erro.
+            Sempre cheque seu painel da Betfair separadamente.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <Label className="text-sm text-foreground">Ativar auto-execução Betfair</Label>
+            <p className="text-[11px] text-muted-foreground">Sem isso, você ainda pode usar o botão "Apostar agora" manualmente em cada sinal.</p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={(v) => setMut.mutate({ enabled: v })}
+            disabled={!isAdmin || setMut.isPending}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label className="text-xs text-foreground">Stake máximo por aposta automática (R$)</Label>
+            <Badge variant="outline" className="text-xs">R$ {maxStake.toFixed(2)}</Badge>
+          </div>
+          <input
+            type="range" min="1" max="500" step="1" value={maxStake}
+            onChange={(e) => setMut.mutate({ maxStakeBrl: parseFloat(e.target.value) })}
+            disabled={!isAdmin || setMut.isPending}
+            className="w-full accent-warning disabled:opacity-50"
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>R$ 1 (cobaia)</span><span>R$ 50</span><span>R$ 500 (máx)</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Quando a IA recomendar stake maior que esse limite, o sistema reduz pra esse teto antes de apostar. Proteção contra bugs.
+          </p>
         </div>
 
         {!isAdmin && (

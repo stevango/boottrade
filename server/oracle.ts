@@ -9,6 +9,7 @@ import { and, eq, gte } from "drizzle-orm";
 import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetchScores, type ScoreEvent } from "./oddsData";
 import { isOddsIoConfigured, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { isApiFootballConfigured, analyzeMatch, buildAdvisorPrompt, computeBetIntelligence, type AdviseInput } from "./matchAnalysis";
+import { isAutoBetEnabled, getAutoBetMaxStakeBrl, placeBetForSignal } from "./betfairExecutor";
 import { isLLMConfigured, chatComplete } from "./llm";
 import type { ValueBet } from "./oddsAnalysis";
 
@@ -146,6 +147,30 @@ async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBe
       decision: intelligence.decision,
       recommendedStakeBrl: intelligence.recommendedStakeBrl,
     });
+
+    // Auto-bet on Betfair if enabled AND advisor said SIM AND we have a
+    // sensible stake. Capped by BETFAIR_AUTO_BET_MAX_STAKE_BRL setting so a
+    // bug never burns more than the configured cobaia amount.
+    if (intelligence.decision === "SIM" && intelligence.recommendedStakeBrl > 0 && await isAutoBetEnabled()) {
+      const cap = await getAutoBetMaxStakeBrl();
+      const stake = Math.min(intelligence.recommendedStakeBrl, cap);
+      if (stake > 0 && bet.bestPrice > 1) {
+        try {
+          const r = await placeBetForSignal({
+            userId, decisionId,
+            home, away,
+            market: bet.market, outcome: bet.outcome,
+            bestPrice: bet.bestPrice, stake,
+            commence: bet.commence,
+            source: "betfair_auto",
+          });
+          if (r.ok) console.log(`[oracle] auto-bet OK decisionId=${decisionId} stake=${stake} matched=${r.matchedPrice}`);
+          else console.warn(`[oracle] auto-bet falhou decisionId=${decisionId}: ${r.reason}`);
+        } catch (e) {
+          console.warn(`[oracle] auto-bet exceção decisionId=${decisionId}:`, e instanceof Error ? e.message : e);
+        }
+      }
+    }
     return true;
   } catch (e) {
     console.warn(`[oracle] auto-advise failed for decision ${decisionId} (${source}):`, e instanceof Error ? e.message : e);

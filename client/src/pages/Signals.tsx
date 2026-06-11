@@ -641,6 +641,68 @@ function AccuracyCell({ label, acc, correct, wrong, pending }: { label: string; 
   );
 }
 
+function BetfairOneClick({ ctx, intelligence }: { ctx: any; intelligence: any }) {
+  const placeMut = trpc.betfair.placeOneClick.useMutation();
+  const [result, setResult] = useState<any>(null);
+
+  const placed = result?.ok;
+  const failed = result && !result.ok;
+
+  const submit = () => {
+    if (!ctx) return;
+    const stake = Math.min(intelligence.recommendedStakeBrl, 1000);
+    placeMut.mutate({
+      decisionId: ctx.decisionId,
+      home: ctx.home,
+      away: ctx.away,
+      market: ctx.market,
+      outcome: ctx.outcome,
+      bestPrice: ctx.bestPrice ?? 0,
+      stake,
+      commence: ctx.commence,
+    }, {
+      onSuccess: (r) => { setResult(r); if (r.ok) toast.success(`Aposta colocada na Betfair! ${r.runnerName} @ ${r.matchedPrice.toFixed(2)}`); else toast.error(r.reason); },
+      onError: (e) => { setResult({ ok: false, reason: e.message }); toast.error(e.message); },
+    });
+  };
+
+  return (
+    <div className="p-3 rounded-lg border-2 border-warning/40 bg-warning/5">
+      <p className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+        <Zap className="w-4 h-4 text-warning" /> Executar na Betfair
+      </p>
+      {!result && (
+        <>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Sistema vai buscar o mercado correspondente, validar o preço atual (tolerância 5%) e enviar a aposta
+            BACK de R$ {intelligence.recommendedStakeBrl.toFixed(2)} no preço {ctx?.bestPrice?.toFixed(2) ?? "?"}.
+            Você precisa ter saldo suficiente na Betfair Brasil.
+          </p>
+          <Button size="sm" onClick={submit} disabled={placeMut.isPending} className="bg-warning hover:bg-warning/90 text-background">
+            {placeMut.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Apostando...</> : <>⚡ Apostar agora na Betfair</>}
+          </Button>
+        </>
+      )}
+      {placed && (
+        <div className="p-2 rounded bg-profit/10 border border-profit/30 text-xs">
+          <p className="font-medium text-profit">✓ Aposta colocada com sucesso</p>
+          <p className="text-muted-foreground mt-1">
+            {result.runnerName} @ {result.matchedPrice.toFixed(2)} · R$ {result.matchedSize.toFixed(2)} casado
+            {result.betfairBetId && <> · Betfair ID: <code className="text-[10px]">{result.betfairBetId}</code></>}
+          </p>
+        </div>
+      )}
+      {failed && (
+        <div className="p-2 rounded bg-loss/10 border border-loss/30 text-xs">
+          <p className="font-medium text-loss">✗ Não foi possível apostar</p>
+          <p className="text-muted-foreground mt-1">{result.reason}</p>
+          <Button size="sm" variant="ghost" className="mt-2 text-[11px]" onClick={() => setResult(null)}>Tentar de novo</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IntelligencePanel({ bi }: { bi: any }) {
   const fmt = (n: number | null | undefined, suffix = "%") => n == null ? "—" : `${n.toFixed(1)}${suffix}`;
   return (
@@ -785,6 +847,9 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
       )}
       {r?.intelligence && <IntelligencePanel bi={r.intelligence} />}
       {r?.advice && <AdviceRender text={r.advice} />}
+      {r?.intelligence?.decision === "SIM" && r?.intelligence?.recommendedStakeBrl > 0 && (
+        <BetfairOneClick ctx={ctx} intelligence={r.intelligence} />
+      )}
 
       {showHistory && past.length > 0 && (
         <div className="space-y-2 pt-2 border-t border-border">

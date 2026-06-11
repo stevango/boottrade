@@ -8,7 +8,8 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { runOracleForAllActive, tryResolveAllOracleSignals } from "../oracle";
+import { runOracleForAllActive, tryResolveAllOracleSignals, listOracleActiveUsers } from "../oracle";
+import { settleBetfairBetsForUser } from "../betfairExecutor";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -122,6 +123,21 @@ async function startServer() {
     };
     setTimeout(() => { tickOracle(); setInterval(tickOracle, ORACLE_INTERVAL_MS); }, ORACLE_FIRST_DELAY_MS);
     setTimeout(() => { tickResolve(); setInterval(tickResolve, RESOLVE_INTERVAL_MS); }, RESOLVE_FIRST_DELAY_MS);
+
+    // Betfair settlement — every 10 min query listClearedOrders for each
+    // active Oracle user and mirror real-money P&L into brain_decisions.
+    const tickBetfairSettle = async () => {
+      try {
+        const userIds = await listOracleActiveUsers();
+        for (const uid of userIds) {
+          const r = await settleBetfairBetsForUser(uid);
+          if (r.settled > 0) console.log(`[betfair] settled ${r.settled} bet(s) for user ${uid}`);
+        }
+      } catch (e) {
+        console.error("[betfair] settle tick failed:", e);
+      }
+    };
+    setTimeout(() => { tickBetfairSettle(); setInterval(tickBetfairSettle, 10 * 60 * 1000); }, 120_000);
   }
 }
 

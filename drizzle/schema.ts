@@ -352,6 +352,41 @@ export const teamCache = mysqlTable("team_cache", {
   fetchedAt: timestamp("fetchedAt").defaultNow().notNull(),
 });
 
+// Bets actually placed (manual or auto-Betfair). Distinct from
+// brain_decisions which is the robot's history of signals — a bet is when
+// real money was placed. Settled bets carry the real profit from the
+// bookmaker's API; manual bets carry the user-reported amount.
+export const bets = mysqlTable("bets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  decisionId: int("decisionId"),     // FK to brain_decisions (nullable for ad-hoc bets)
+  adviceId: int("adviceId"),         // FK to signal_advice (nullable)
+  event: varchar("event", { length: 200 }).notNull(),
+  market: varchar("market", { length: 60 }).notNull(),
+  outcome: varchar("outcome", { length: 100 }).notNull(),
+  side: mysqlEnum("side", ["BACK", "LAY"]).default("BACK").notNull(),
+  bookmaker: varchar("bookmaker", { length: 60 }).notNull(),  // "Betfair" | "Bet365" | etc
+  price: decimal("price", { precision: 8, scale: 3 }).notNull(),
+  stake: decimal("stake", { precision: 15, scale: 2 }).notNull(),
+  // Betfair-specific identifiers when placed via API
+  betfairMarketId: varchar("betfairMarketId", { length: 32 }),
+  betfairSelectionId: varchar("betfairSelectionId", { length: 32 }),
+  betfairBetId: varchar("betfairBetId", { length: 32 }),
+  averagePriceMatched: decimal("averagePriceMatched", { precision: 8, scale: 3 }),
+  sizeMatched: decimal("sizeMatched", { precision: 15, scale: 2 }),
+  // Status lifecycle
+  status: mysqlEnum("status", ["pending", "placed", "won", "lost", "void", "cancelled", "error"]).default("pending").notNull(),
+  profit: decimal("profit", { precision: 15, scale: 2 }),     // R$ realized profit; negative if lost
+  placedAt: timestamp("placedAt").defaultNow().notNull(),
+  settledAt: timestamp("settledAt"),
+  source: mysqlEnum("source", ["manual", "betfair_auto", "betfair_oneClick"]).default("manual").notNull(),
+  errorMessage: text("errorMessage"),
+}, (t) => ({
+  userIdx: index("bets_userId_placedAt_idx").on(t.userId, t.placedAt),
+  decisionIdx: index("bets_decisionId_idx").on(t.decisionId),
+  betfairBetIdx: index("bets_betfairBetId_idx").on(t.betfairBetId),
+}));
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Robot = typeof robots.$inferSelect;
@@ -369,3 +404,4 @@ export type AiConversation = typeof aiConversations.$inferSelect;
 export type DailyPnl = typeof dailyPnl.$inferSelect;
 export type SignalAdvice = typeof signalAdvice.$inferSelect;
 export type TeamCache = typeof teamCache.$inferSelect;
+export type Bet = typeof bets.$inferSelect;
