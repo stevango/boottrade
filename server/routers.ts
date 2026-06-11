@@ -41,6 +41,8 @@ import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
 import { placeBetForSignal, settleBetfairBetsForUser, isAutoBetEnabled, getAutoBetMaxStakeBrl, setAutoBetConfig, findMarketForSignal } from "./betfairExecutor";
 import { runAthenaForUser } from "./athena";
 import { getWebhookConfig, setWebhookConfig, testWebhook } from "./webhooks";
+import { getOmsConfig, setOmsConfig, executeSignal } from "./oms";
+import { CONNECTORS } from "./brokers/registry";
 import { bets as betsTable } from "../drizzle/schema";
 import { eq as drizzleEq, desc as drizzleDesc } from "drizzle-orm";
 import { getDb as getDrizzleDb } from "./db";
@@ -205,6 +207,47 @@ export const appRouter = router({
 
   athena: router({
     runNow: protectedProcedure.mutation(async ({ ctx }) => runAthenaForUser(ctx.user.id)),
+  }),
+
+  oms: router({
+    config: protectedProcedure.query(async () => getOmsConfig()),
+    setConfig: adminProcedure
+      .input(z.object({
+        routingMode: z.enum(["off", "paper", "clear"]).optional(),
+        killSwitch: z.boolean().optional(),
+        dailyMaxStakeBrl: z.number().min(0).max(1_000_000).optional(),
+        maxPerOrderBrl: z.number().min(0).max(1_000_000).optional(),
+      }))
+      .mutation(async ({ input }) => { await setOmsConfig(input); return { success: true }; }),
+    testBroker: protectedProcedure
+      .input(z.object({ broker: z.enum(["paper", "clear"]) }))
+      .mutation(async ({ input }) => {
+        const c = CONNECTORS[input.broker];
+        if (!c) return { ok: false, message: "Broker desconhecido" };
+        return c.testConnection();
+      }),
+    accountSnapshot: protectedProcedure
+      .input(z.object({ broker: z.enum(["paper", "clear"]) }))
+      .query(async ({ input }) => {
+        const c = CONNECTORS[input.broker];
+        if (!c) return null;
+        try { return await c.getAccount(); } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+      }),
+    placeManual: protectedProcedure
+      .input(z.object({
+        symbol: z.string().min(1).max(20),
+        side: z.enum(["BUY", "SELL"]),
+        stake: z.number().min(1).max(1_000_000),
+        limitPrice: z.number().min(0.01).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => executeSignal({
+        userId: ctx.user.id,
+        symbol: input.symbol.toUpperCase(),
+        side: input.side,
+        stake: input.stake,
+        limitPrice: input.limitPrice,
+        source: "manual",
+      })),
   }),
 
   betfair: router({

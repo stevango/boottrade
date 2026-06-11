@@ -12,6 +12,8 @@ import { and, eq } from "drizzle-orm";
 import { fetchDailyHistory, isMarketDataConfigured } from "./marketData";
 import { analyzeSeries } from "./signals";
 import { postSignalToWebhook } from "./webhooks";
+import { executeSignal } from "./oms";
+import { getRoutingMode } from "./brokers/registry";
 
 const ATHENA_SLUG = "athena-ai";
 
@@ -154,8 +156,8 @@ export async function runAthenaForUser(userId: number): Promise<AthenaResult> {
       });
       if (r.success) {
         created++;
-        // Webhook OUT — fire-and-forget, don't await.
         if (r.decisionId != null) {
+          // Webhook OUT — fire-and-forget.
           void postSignalToWebhook({
             robot: "athena-ai",
             source: "athena",
@@ -167,6 +169,25 @@ export async function runAthenaForUser(userId: number): Promise<AthenaResult> {
             bestPrice: s.lastPrice,
             generatedAt: new Date().toISOString(),
           });
+          // OMS execution — if routing is enabled, send to the active broker.
+          // Default stake R$ 100 capped by OMS_MAX_PER_ORDER_BRL.
+          if (s.side === "buy" || s.side === "sell") {
+            void (async () => {
+              const mode = await getRoutingMode();
+              if (mode === "off") return;
+              const r2 = await executeSignal({
+                userId,
+                decisionId: r.decisionId,
+                symbol: s.symbol,
+                side: s.side === "buy" ? "BUY" : "SELL",
+                stake: 100,
+                source: "athena",
+                reasoning: s.reasoning,
+              });
+              if (r2.ok) console.log(`[athena→oms] ${s.symbol} ${s.side} via ${r2.route} status=${r2.status}`);
+              else console.warn(`[athena→oms] ${s.symbol} ${s.side} bloqueado: ${r2.reason}`);
+            })();
+          }
         }
       }
     } catch (e) {

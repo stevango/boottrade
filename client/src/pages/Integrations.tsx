@@ -283,6 +283,10 @@ export default function Integrations() {
           {AUTOMATION.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
+        <Section title="Roteamento de Ordens (OMS)" icon={Bot}>
+          <OmsRoutingCard isAdmin={isAdmin} />
+        </Section>
+
         <Section title="Comportamento dos Robôs" icon={Bot}>
           <OracleAutoAdviseCard isAdmin={isAdmin} />
           <BetfairAutoBetCard isAdmin={isAdmin} />
@@ -719,6 +723,108 @@ function BetfairAutoBetCard({ isAdmin }: { isAdmin: boolean }) {
         {!isAdmin && (
           <p className="text-[11px] text-muted-foreground italic">Apenas administradores podem alterar essa configuração.</p>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
+  const cfg = trpc.oms.config.useQuery();
+  const utils = trpc.useUtils();
+  const setMut = trpc.oms.setConfig.useMutation({
+    onSuccess: () => { toast.success("Roteamento atualizado."); utils.oms.config.invalidate(); },
+    onError: () => toast.error("Falha ao salvar."),
+  });
+  const testMut = trpc.oms.testBroker.useMutation();
+  const route = cfg.data?.routingMode ?? "off";
+  const killSwitch = cfg.data?.killSwitch ?? false;
+  const dailyMax = cfg.data?.dailyMaxStakeBrl ?? 500;
+  const perOrderMax = cfg.data?.maxPerOrderBrl ?? 100;
+
+  return (
+    <Card className="bg-card border-border sm:col-span-2 lg:col-span-3">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base text-foreground flex items-center gap-2">
+          🎯 OMS — Order Management System
+          {killSwitch
+            ? <Badge variant="outline" className="bg-loss/10 text-loss border-loss/30 text-[10px]">KILL SWITCH ATIVO</Badge>
+            : route === "off"
+              ? <Badge variant="outline" className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20 text-[10px]">Desligado</Badge>
+              : route === "paper"
+                ? <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">Paper (simulado)</Badge>
+                : <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30 text-[10px]">{route.toUpperCase()} — DINHEIRO REAL</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Onde as ordens dos robôs vão. <strong>Paper</strong> = simula contra preços brapi sem dinheiro real (use pra testar).
+          <strong> Clear</strong> = envia ordens reais via API Clear (precisa credenciais aprovadas).
+          <strong> Desligado</strong> = robôs geram sinais mas ninguém executa.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label className="text-sm text-foreground mb-2 block">Modo de roteamento</Label>
+          <div className="grid grid-cols-3 gap-2">
+            {(["off", "paper", "clear"] as const).map((mode) => (
+              <button key={mode}
+                onClick={() => setMut.mutate({ routingMode: mode })}
+                disabled={!isAdmin || setMut.isPending}
+                className={`p-3 rounded-lg border text-xs transition-colors ${route === mode ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground hover:text-foreground"} disabled:opacity-50`}>
+                {mode === "off" && <>🔴 Desligado<br /><span className="text-[10px]">Robôs só geram sinais</span></>}
+                {mode === "paper" && <>🧪 Paper<br /><span className="text-[10px]">Simulado, brapi prices</span></>}
+                {mode === "clear" && <>💼 Clear<br /><span className="text-[10px]">Ordens reais em B3</span></>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => testMut.mutate({ broker: "paper" }, {
+            onSuccess: (r) => r.ok ? toast.success(`Paper OK: ${r.message}`) : toast.error(`Paper falhou: ${r.message}`),
+          })}>Testar Paper</Button>
+          <Button size="sm" variant="outline" onClick={() => testMut.mutate({ broker: "clear" }, {
+            onSuccess: (r) => r.ok ? toast.success(`Clear OK: ${r.message}`) : toast.error(`Clear falhou: ${r.message}`),
+          })}>Testar Clear</Button>
+        </div>
+
+        <div className="border-t border-border pt-3 space-y-3">
+          <p className="text-sm font-medium text-foreground">Limites de risco</p>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs text-foreground">Stake máximo por ordem (R$)</Label>
+              <Badge variant="outline" className="text-xs">R$ {perOrderMax.toFixed(0)}</Badge>
+            </div>
+            <input type="range" min="10" max="5000" step="10" value={perOrderMax}
+              onChange={(e) => setMut.mutate({ maxPerOrderBrl: parseFloat(e.target.value) })}
+              disabled={!isAdmin || setMut.isPending}
+              className="w-full accent-primary disabled:opacity-50" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs text-foreground">Stake máximo por dia (R$)</Label>
+              <Badge variant="outline" className="text-xs">R$ {dailyMax.toFixed(0)}</Badge>
+            </div>
+            <input type="range" min="50" max="50000" step="50" value={dailyMax}
+              onChange={(e) => setMut.mutate({ dailyMaxStakeBrl: parseFloat(e.target.value) })}
+              disabled={!isAdmin || setMut.isPending}
+              className="w-full accent-primary disabled:opacity-50" />
+          </div>
+        </div>
+
+        <div className="border-t border-border pt-3 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <Label className="text-sm text-loss">⚠ Kill Switch</Label>
+            <p className="text-[11px] text-muted-foreground">Quando ligado: bloqueia TODAS as ordens imediatamente, independente do modo. Use em emergência.</p>
+          </div>
+          <Switch checked={killSwitch} onCheckedChange={(v) => setMut.mutate({ killSwitch: v })} disabled={!isAdmin || setMut.isPending} />
+        </div>
+
+        <div className="p-3 rounded bg-secondary/40 border border-border text-[11px] text-muted-foreground">
+          <p className="text-foreground font-medium mb-1">Status atual</p>
+          <p>Roteamento: <code className="text-primary">{route}</code> · Kill switch: <code>{killSwitch ? "ON" : "off"}</code> · Por ordem: R$ {perOrderMax} · Por dia: R$ {dailyMax}</p>
+          <p className="mt-1">Conectores instalados: <code>paper</code>, <code>clear</code> (skeleton). Próximos: <code>interactive_brokers</code>, <code>cedro</code>, <code>btg</code>.</p>
+        </div>
       </CardContent>
     </Card>
   );
