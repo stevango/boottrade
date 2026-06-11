@@ -128,20 +128,31 @@ export async function runAthenaForUser(userId: number): Promise<AthenaResult> {
   let analyzed = 0, errors = 0, skipped = 0;
   const candidates: AthenaSignal[] = [];
 
+  // Try multiple ranges from longest to shortest. brapi free tier rejects
+  // longer ranges for many tickers with various error shapes (403, "plan",
+  // "range" or just empty data). Cascade through until something returns
+  // enough points to compute SMA50.
+  const RANGES = ["1y", "6mo", "3mo", "1mo"] as const;
+  const lastErrors: string[] = [];
   for (const sym of symbols) {
-    try {
-      let hist;
+    let hist: Awaited<ReturnType<typeof fetchDailyHistory>> | null = null;
+    let lastErr = "";
+    for (const range of RANGES) {
       try {
-        hist = await fetchDailyHistory(sym, PRIMARY_RANGE);
+        const h = await fetchDailyHistory(sym, range);
+        if (h.points && h.points.length >= 50) { hist = h; break; }
+        lastErr = `range=${range} returned ${h.points?.length ?? 0} points`;
       } catch (e) {
-        // Free tier sometimes blocks longer ranges; fall back to 6mo.
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("403") || msg.includes("range") || msg.includes("plan")) {
-          hist = await fetchDailyHistory(sym, FALLBACK_RANGE);
-        } else {
-          throw e;
-        }
+        lastErr = `range=${range} → ${e instanceof Error ? e.message : String(e)}`;
       }
+    }
+    if (!hist) {
+      errors++;
+      if (lastErrors.length < 5) lastErrors.push(`${sym}: ${lastErr}`);
+      console.warn(`[athena] ${sym} failed all ranges:`, lastErr);
+      continue;
+    }
+    try {
       analyzed++;
       const an = analyzeSeries(hist.points);
       const sig = tradeFromAnalysis(sym, an);
@@ -149,9 +160,10 @@ export async function runAthenaForUser(userId: number): Promise<AthenaResult> {
       else skipped++;
     } catch (e) {
       errors++;
-      console.warn(`[athena] ${sym} failed:`, e instanceof Error ? e.message : e);
+      console.warn(`[athena] ${sym} analyzeSeries failed:`, e instanceof Error ? e.message : e);
     }
   }
+  if (lastErrors.length > 0) console.warn(`[athena] sample errors:`, lastErrors);
 
   // Rank by trend strength (most confident first), cap to MAX per run.
   const ranked = candidates.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_SIGNALS_PER_RUN);
