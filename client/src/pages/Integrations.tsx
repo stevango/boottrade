@@ -29,9 +29,9 @@ const ROBOT_MAP = {
 
 type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY" | "API_FOOTBALL_KEY" | "OPENAI_API_KEY" | "BRAPI_TOKEN";
 
-type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key";
+type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key" | "clientId" | "clientSecret" | "account" | "sessionToken";
 type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
-type ConnectableId = "binance" | "betfair";
+type ConnectableId = "binance" | "betfair" | "clear" | "ibkr" | "mercado_bitcoin";
 type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: Field[]; note?: string; docsUrl?: string; docsLabel?: string };
 
 const CONNECTABLES: Connectable[] = [
@@ -46,14 +46,28 @@ const CONNECTABLES: Connectable[] = [
     ],
     note: "Em BR, a Betfair frequentemente exige login com certificado cliente. Se você criou o certificado em Settings → My Security → My API Certificates, cole o conteúdo PEM do .crt e do .key abaixo.",
     docsUrl: "https://docs.developer.betfair.com/", docsLabel: "Doc Betfair Exchange API" },
+  { id: "clear", name: "Clear Smart Trader (B3)", logo: "💼",
+    desc: "API oficial da Clear pra envio de ordens em ações, mini índice e mini dólar. Precisa solicitar acesso developer em devs.clear.com.br e ser aprovado antes (variável por relacionamento).",
+    usedBy: ["Athena AI (B3)", "OMS (roteamento)"],
+    fields: [{ name: "clientId" }, { name: "clientSecret" }, { name: "account", optional: true }],
+    note: "Após aprovação na Clear, cole o clientId e clientSecret recebidos. Account é o número da sua conta Clear (ex: 123456) — usado pra rotear ordens ao escritório correto se você opera mais de uma conta.",
+    docsUrl: "https://devs.clear.com.br", docsLabel: "Doc Clear Smart Trader API" },
+  { id: "ibkr", name: "Interactive Brokers (Internacional)", logo: "🌎",
+    desc: "Acesso a NYSE, Nasdaq, Forex, Futuros — Client Portal API. Precisa renovar o token de sessão diariamente fazendo login em clientportal.gw.interactivebrokers.com.",
+    usedBy: ["OMS (roteamento internacional)"],
+    fields: [{ name: "account" }, { name: "sessionToken" }],
+    note: "Account é o seu IBKR account ID (ex: U1234567). Session token é o cookie 'api=...' do Client Portal, extraído via DevTools → Application → Cookies após login.",
+    docsUrl: "https://www.interactivebrokers.com/api/doc.html", docsLabel: "Doc Client Portal API" },
+  { id: "mercado_bitcoin", name: "Mercado Bitcoin (Crypto BRL)", logo: "₿",
+    desc: "Compra e venda de criptomoedas em BRL via API v4 (HMAC SHA256). 200+ ativos.",
+    usedBy: ["Kraken AI (crypto)", "OMS (roteamento crypto)"],
+    fields: [{ name: "apiKey" }, { name: "apiSecret" }, { name: "account" }],
+    note: "Crie API Key em Perfil → API. Marque permissões 'read' e 'trade' apenas (NÃO marque withdraw). Account é o número que aparece no painel deles.",
+    docsUrl: "https://api.mercadobitcoin.net/api/v4/docs", docsLabel: "Doc Mercado Bitcoin API v4" },
 ];
 
 type Traditional = { id: string; name: string; logo: string; desc: string; docsUrl?: string; usedBy: string[]; status: string };
 const TRADITIONAL: Traditional[] = [
-  { id: "clear", name: "Clear Corretora", logo: "🟢",
-    desc: "API existe (devs.clear.com.br) mas é institucional/parceiro — não self-service. Para automação retail, a Clear usa MetaTrader 5 e Profit (Nelogica). A leitura de posições virá via Open Finance no futuro.",
-    docsUrl: "https://devs.clear.com.br/index.html",
-    usedBy: ROBOT_MAP.open_finance, status: "Requer parceria" },
   { id: "br_others", name: "XP, Rico, BTG, Inter, Modal, NuInvest…", logo: "🏦",
     desc: "Não oferecem API pública self-service para o trader. Importação de posições virá via Open Finance (somente leitura).",
     usedBy: ROBOT_MAP.open_finance, status: "Em breve (Open Finance)" },
@@ -257,12 +271,24 @@ export default function Integrations() {
           />
         </Section>
 
+        {/* Corretoras com API pra execução */}
+        <Section title="Corretoras (Execução automatizada)" icon={Landmark}>
+          {(["clear", "ibkr"] as const).map((id) => {
+            const c = CONNECTABLES.find((x) => x.id === id);
+            if (!c) return null;
+            if (isConnected(c.id)) return <NoteAlready key={c.id} name={c.name} />;
+            return <ConnectableCard key={c.id} item={c} onConnect={() => openConnect(c)} />;
+          })}
+        </Section>
+
         {/* Cripto */}
         <Section title="Exchanges de Cripto" icon={Bitcoin}>
-          {CONNECTABLES.filter((c) => c.id === "binance" && !isConnected(c.id)).map((c) => (
-            <ConnectableCard key={c.id} item={c} onConnect={() => openConnect(c)} />
-          ))}
-          {isConnected("binance") && <NoteAlready name="Binance" />}
+          {(["binance", "mercado_bitcoin"] as const).map((id) => {
+            const c = CONNECTABLES.find((x) => x.id === id);
+            if (!c) return null;
+            if (isConnected(c.id)) return <NoteAlready key={c.id} name={c.name} />;
+            return <ConnectableCard key={c.id} item={c} onConnect={() => openConnect(c)} />;
+          })}
         </Section>
 
         {/* Apostas / esportes */}
@@ -273,8 +299,8 @@ export default function Integrations() {
           {isConnected("betfair") && <NoteAlready name="Betfair" />}
         </Section>
 
-        {/* Tradicionais */}
-        <Section title="Corretoras Tradicionais" icon={Landmark}>
+        {/* Tradicionais (sem API) */}
+        <Section title="Corretoras sem API" icon={Landmark}>
           {TRADITIONAL.map((t) => <TraditionalCard key={t.id} item={t} />)}
         </Section>
 
@@ -980,7 +1006,14 @@ function NoteAlready({ name }: { name: string }) {
 }
 
 function labelFor(f: string): string {
-  return ({ apiKey: "API Key", apiSecret: "API Secret", appKey: "App Key", username: "Usuário", password: "Senha", cert: "Certificado cliente (PEM)", key: "Chave privada do certificado (PEM)" } as Record<string, string>)[f] ?? f;
+  return ({
+    apiKey: "API Key", apiSecret: "API Secret",
+    appKey: "App Key",
+    username: "Usuário", password: "Senha",
+    cert: "Certificado cliente (PEM)", key: "Chave privada do certificado (PEM)",
+    clientId: "Client ID", clientSecret: "Client Secret",
+    account: "Número da conta", sessionToken: "Session Token",
+  } as Record<string, string>)[f] ?? f;
 }
 function placeholderFor(f: string): string {
   return ({
@@ -989,5 +1022,9 @@ function placeholderFor(f: string): string {
     username: "seu_usuario", password: "••••••••",
     cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
     key: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+    clientId: "Client ID recebido da Clear / IBKR",
+    clientSecret: "Client Secret recebido (não compartilhe)",
+    account: "ex: 123456 ou U1234567",
+    sessionToken: "Cookie api=... do Client Portal",
   } as Record<string, string>)[f] ?? "";
 }
