@@ -94,22 +94,34 @@ async function startServer() {
   // every user who has the robot activated. First tick fires 5 min after
   // boot to give DB connections time to warm up.
   if (process.env.NODE_ENV !== "test") {
+    // Oracle full scan (generate new signals + run advisor on top edges)
+    // hourly. Resolver (check /scores for finished games) runs every 15m so
+    // the user sees results land quickly during match days.
     const ORACLE_INTERVAL_MS = 60 * 60 * 1000;
+    const RESOLVE_INTERVAL_MS = 15 * 60 * 1000;
     const ORACLE_FIRST_DELAY_MS = 5 * 60 * 1000;
+    const RESOLVE_FIRST_DELAY_MS = 90 * 1000;
     const tickOracle = async () => {
       try {
         const created = await runOracleForAllActive();
-        const resolved = await tryResolveAllOracleSignals();
         const totalC = created.reduce((s, r) => s + r.created, 0);
-        const totalR = resolved.reduce((s, r) => s + r.resolved, 0);
-        if (totalC > 0 || totalR > 0) {
-          console.log(`[oracle] tick: ${created.length} usuário(s), ${totalC} novos sinais, ${totalR} resolvidos automaticamente`);
-        }
+        if (totalC > 0) console.log(`[oracle] scan: ${created.length} usuário(s), ${totalC} novos sinais`);
       } catch (e) {
-        console.error("[oracle] tick failed:", e);
+        console.error("[oracle] scan tick failed:", e);
+      }
+    };
+    const tickResolve = async () => {
+      try {
+        const resolved = await tryResolveAllOracleSignals();
+        const totalR = resolved.reduce((s, r) => s + r.resolved, 0);
+        const totalE = resolved.reduce((s, r) => s + ((r as any).expired ?? 0), 0);
+        if (totalR > 0 || totalE > 0) console.log(`[oracle] resolve: ${totalR} resolvidos, ${totalE} expirados`);
+      } catch (e) {
+        console.error("[oracle] resolve tick failed:", e);
       }
     };
     setTimeout(() => { tickOracle(); setInterval(tickOracle, ORACLE_INTERVAL_MS); }, ORACLE_FIRST_DELAY_MS);
+    setTimeout(() => { tickResolve(); setInterval(tickResolve, RESOLVE_INTERVAL_MS); }, RESOLVE_FIRST_DELAY_MS);
   }
 }
 

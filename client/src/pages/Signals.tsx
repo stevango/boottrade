@@ -45,7 +45,12 @@ const outcomeLabel: Record<string, string> = {
 };
 
 export default function Signals() {
-  const { data, isLoading, refetch, isFetching } = trpc.signals.list.useQuery({ limit: 100 });
+  const { data, isLoading, refetch, isFetching } = trpc.signals.list.useQuery(
+    { limit: 100 },
+    // During match days the auto-resolver writes to DB on its own schedule.
+    // Refetch every 60s so the user sees results land without manual reload.
+    { refetchInterval: 60_000 },
+  );
   const utils = trpc.useUtils();
   const markMut = trpc.signals.markResult.useMutation({
     onSuccess: () => {
@@ -101,6 +106,7 @@ export default function Signals() {
   const [robotFilter, setRobotFilter] = useState<string>("__all__");
   const [marketFilter, setMarketFilter] = useState<string>("__all__");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
+  const [whenFilter, setWhenFilter] = useState<"all" | "today" | "tomorrow" | "upcoming" | "past">("today");
 
   const all: Signal[] = (data as unknown as Signal[]) ?? [];
   // Fetch all advice the user has — we use it to badge signals that already
@@ -118,6 +124,11 @@ export default function Signals() {
   }).filter((m): m is string => !!m))).sort();
 
   const minEdgeNum = parseFloat(minEdge) || 0;
+  const nowMs = Date.now();
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const startOfTomorrow = new Date(startOfToday); startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+  const startOfDayAfterTomorrow = new Date(startOfTomorrow); startOfDayAfterTomorrow.setDate(startOfDayAfterTomorrow.getDate() + 1);
+
   const signals = all.filter((s) => {
     if (parseFloat(s.confidence || "0") < minEdgeNum) return false;
     if (robotFilter !== "__all__" && s.robotName !== robotFilter) return false;
@@ -126,7 +137,24 @@ export default function Signals() {
       if (m !== marketFilter) return false;
     }
     if (statusFilter !== "__all__" && s.outcome !== statusFilter) return false;
+    if (whenFilter !== "all") {
+      const evd = parseEventDate(s.reasoning);
+      if (!evd) return false;
+      const t = evd.getTime();
+      if (whenFilter === "today" && (t < startOfToday.getTime() || t >= startOfTomorrow.getTime())) return false;
+      if (whenFilter === "tomorrow" && (t < startOfTomorrow.getTime() || t >= startOfDayAfterTomorrow.getTime())) return false;
+      if (whenFilter === "upcoming" && t < nowMs) return false;
+      if (whenFilter === "past" && t >= nowMs) return false;
+    }
     return true;
+  }).sort((a, b) => {
+    // Pending first, then by event date ascending (sooner first).
+    const aPending = a.outcome === "pending" ? 0 : 1;
+    const bPending = b.outcome === "pending" ? 0 : 1;
+    if (aPending !== bPending) return aPending - bPending;
+    const ad = parseEventDate(a.reasoning)?.getTime() ?? 0;
+    const bd = parseEventDate(b.reasoning)?.getTime() ?? 0;
+    return ad - bd;
   });
   const pending = signals.filter((s) => s.outcome === "pending");
   const past = signals.filter((s) => s.outcome !== "pending");
@@ -183,6 +211,21 @@ export default function Signals() {
               <div className="flex items-center gap-2 mb-2">
                 <Filter className="w-4 h-4 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">Filtros · {signals.length} de {all.length} sinais</span>
+              </div>
+              <div className="flex gap-1.5 flex-wrap mb-2">
+                {([
+                  ["today", "Hoje"],
+                  ["tomorrow", "Amanhã"],
+                  ["upcoming", "Próximos"],
+                  ["past", "Passados"],
+                  ["all", "Todos"],
+                ] as const).map(([v, label]) => (
+                  <button key={v}
+                    onClick={() => setWhenFilter(v)}
+                    className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${whenFilter === v ? "bg-primary text-primary-foreground border-primary" : "bg-secondary/30 text-muted-foreground border-border hover:text-foreground"}`}>
+                    {label}
+                  </button>
+                ))}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="space-y-1">
@@ -249,7 +292,8 @@ export default function Signals() {
         {pending.length > 0 && (
           <section>
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-warning" /> Pendentes ({pending.length})
+              <Clock className="w-4 h-4 text-warning" />
+              {whenFilter === "today" ? "Jogos de hoje" : whenFilter === "tomorrow" ? "Jogos de amanhã" : whenFilter === "upcoming" ? "Próximos jogos" : whenFilter === "past" ? "Jogos passados" : "Pendentes"} ({pending.length})
             </h2>
             <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} hasAdvice={advisedSet.has(s.id)} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
@@ -474,8 +518,8 @@ function parseAdvice(text: string): { decisao?: string; tamanho?: string; aposta
 }
 
 function PnlAndExposurePanel() {
-  const pnl = trpc.signals.pnl.useQuery();
-  const exposure = trpc.signals.exposure.useQuery();
+  const pnl = trpc.signals.pnl.useQuery(undefined, { refetchInterval: 60_000 });
+  const exposure = trpc.signals.exposure.useQuery(undefined, { refetchInterval: 60_000 });
 
   if (pnl.isLoading || exposure.isLoading) return null;
   const p = pnl.data;
@@ -871,6 +915,28 @@ function parseAssetTeams(asset: string): { home: string; away: string; market: s
   return { home: m[1].trim(), away: m[2].trim(), market: m[3].trim(), outcome: m[4].trim() };
 }
 
+// Parses just the event date out of a reasoning string. Used by the "Quando"
+// filter on /signals so the user can show today's matches first.
+function parseEventDate(reasoning: string | null): Date | null {
+  if (!reasoning) return null;
+  const m = /em\s+(\d{2})\/(\d{2})\/(\d{4}),?\s*(\d{2}):(\d{2})(?::(\d{2}))?/.exec(reasoning);
+  if (!m) return null;
+  const [, dd, mm, yyyy, hh, mi, ss] = m;
+  return new Date(Date.UTC(+yyyy, +mm - 1, +dd, +hh, +mi, +(ss || "0")));
+}
+
+function eventStatus(d: Date | null): { label: string; tone: string; ts: number } {
+  if (!d) return { label: "Sem data", tone: "text-muted-foreground", ts: 0 };
+  const now = Date.now();
+  const delta = d.getTime() - now;
+  if (delta < -3 * 60 * 60 * 1000) return { label: "Finalizado", tone: "text-muted-foreground", ts: d.getTime() };
+  if (delta < 0) return { label: "Ao vivo", tone: "text-loss", ts: d.getTime() };
+  if (delta < 60 * 60 * 1000) return { label: `Em ${Math.max(1, Math.round(delta / 60000))}min`, tone: "text-warning", ts: d.getTime() };
+  if (delta < 24 * 60 * 60 * 1000) return { label: `Em ${Math.round(delta / 3600000)}h`, tone: "text-warning", ts: d.getTime() };
+  if (delta < 48 * 60 * 60 * 1000) return { label: "Amanhã", tone: "text-foreground", ts: d.getTime() };
+  return { label: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), tone: "text-muted-foreground", ts: d.getTime() };
+}
+
 // Reasoning shape: "[source] 14.00 @ BetOnline.ag vs média 6.08 entre 34 casas (edge 27.7%) em 15/06/2026, 16:00:00."
 function parseReasoning(reasoning: string | null): { bestPrice?: number; bestBook?: string; avgPrice?: number; commence?: string } {
   if (!reasoning) return {};
@@ -897,6 +963,8 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
   const teams = parseAssetTeams(s.asset);
   const r = parseReasoning(s.reasoning);
   const ctx = teams ? { home: teams.home, away: teams.away, market: teams.market, outcome: teams.outcome, edgePct: conf, decisionId: s.id, ...r } : null;
+  const evd = parseEventDate(s.reasoning);
+  const evs = eventStatus(evd);
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
@@ -914,8 +982,9 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
                 <Sparkles className="w-2.5 h-2.5 mr-1" /> orientado
               </Badge>
             )}
+            <span className={`text-[10px] font-medium ${evs.tone}`}>{evs.label}</span>
             <span className="text-[10px] text-muted-foreground">
-              {s.robotName ?? "Robô"} · {new Date(s.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {s.robotName ?? "Robô"} · gerado {new Date(s.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
           <p className="text-sm text-foreground font-medium">{s.asset}</p>
