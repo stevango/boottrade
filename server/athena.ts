@@ -28,6 +28,11 @@ const DEFAULT_SYMBOLS = [
 
 const MIN_TREND_STRENGTH = 60;
 const MAX_SIGNALS_PER_RUN = 8;
+// brapi.dev free tier has tighter range limits than paid. Most large caps
+// return at least 1y; some return 2y. We try 1y first and fall back to 6mo
+// if the symbol rejects it.
+const PRIMARY_RANGE = "1y";
+const FALLBACK_RANGE = "6mo";
 
 export async function getAthenaRobotId(): Promise<number | null> {
   const db = await getDb();
@@ -125,7 +130,18 @@ export async function runAthenaForUser(userId: number): Promise<AthenaResult> {
 
   for (const sym of symbols) {
     try {
-      const hist = await fetchDailyHistory(sym, "2y");
+      let hist;
+      try {
+        hist = await fetchDailyHistory(sym, PRIMARY_RANGE);
+      } catch (e) {
+        // Free tier sometimes blocks longer ranges; fall back to 6mo.
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("403") || msg.includes("range") || msg.includes("plan")) {
+          hist = await fetchDailyHistory(sym, FALLBACK_RANGE);
+        } else {
+          throw e;
+        }
+      }
       analyzed++;
       const an = analyzeSeries(hist.points);
       const sig = tradeFromAnalysis(sym, an);

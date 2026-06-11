@@ -38,11 +38,22 @@ const outcomeColor: Record<string, string> = {
 // bet and won/lost. profitAmount > 0 distinguishes the two; we render a
 // richer label based on that below.
 const outcomeLabel: Record<string, string> = {
-  pending: "Aguardando jogo",
+  pending: "Aguardando confirmação",
   profit: "Robô acertou",
   loss: "Robô errou",
   neutral: "Ignorado",
 };
+
+// Robot-aware label for the pending state — sports waiting for game,
+// stocks/crypto waiting for trade settlement.
+function outcomeLabelForRobot(outcome: string, robotName?: string | null): string {
+  if (outcome !== "pending") return outcomeLabel[outcome] ?? outcome;
+  const r = (robotName ?? "").toLowerCase();
+  if (r.includes("oracle")) return "Aguardando jogo";
+  if (r.includes("athena")) return "Aguardando confirmação B3";
+  if (r.includes("kraken")) return "Aguardando confirmação crypto";
+  return "Aguardando confirmação";
+}
 
 export default function Signals() {
   const { data, isLoading, refetch, isFetching } = trpc.signals.list.useQuery(
@@ -62,14 +73,18 @@ export default function Signals() {
   });
   const runAthenaMut = trpc.athena.runNow.useMutation({
     onSuccess: (r) => {
-      toast.success(`Athena rodou: ${r.created} sinais novos (${r.analyzed} ativos analisados, ${r.skipped} pulados)`);
+      const parts = [`${r.created} sinais novos`, `${r.analyzed} analisados`, `${r.skipped} pulados`];
+      if (r.errors > 0) parts.push(`${r.errors} erros`);
+      toast.success(`Athena: ${parts.join(" · ")}`);
       utils.signals.list.invalidate();
     },
     onError: (e) => toast.error(`Athena falhou: ${e.message}`),
   });
   const runKrakenMut = trpc.kraken.runNow.useMutation({
     onSuccess: (r) => {
-      toast.success(`Kraken rodou: ${r.created} sinais novos (${r.analyzed} pares analisados, ${r.skipped} pulados)`);
+      const parts = [`${r.created} sinais novos`, `${r.analyzed} analisados`, `${r.skipped} pulados`];
+      if (r.errors > 0) parts.push(`${r.errors} erros`);
+      toast.success(`Kraken: ${parts.join(" · ")}`);
       utils.signals.list.invalidate();
     },
     onError: (e) => toast.error(`Kraken falhou: ${e.message}`),
@@ -124,7 +139,7 @@ export default function Signals() {
   const [robotFilter, setRobotFilter] = useState<string>("__all__");
   const [marketFilter, setMarketFilter] = useState<string>("__all__");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
-  const [whenFilter, setWhenFilter] = useState<"all" | "today" | "tomorrow" | "upcoming" | "past">("today");
+  const [whenFilter, setWhenFilter] = useState<"all" | "today" | "tomorrow" | "upcoming" | "past">("all");
 
   const all: Signal[] = (data as unknown as Signal[]) ?? [];
   // Fetch all advice the user has — we use it to badge signals that already
@@ -575,7 +590,7 @@ function PnlAndExposurePanel() {
             <AccuracyCell label="Total" acc={p.all.predAccuracy} correct={p.all.predCorrect} wrong={p.all.predWrong} pending={p.all.predPending} />
           </div>
           <p className="text-[11px] text-muted-foreground mt-2">
-            <strong className="text-foreground">{p.all.predPending}</strong> sugestões aguardando jogo acontecer — sistema marca automaticamente.
+            <strong className="text-foreground">{p.all.predPending}</strong> sugestões aguardando confirmação (jogo terminar / movimento da ação).
           </p>
         </CardContent>
       </Card>
@@ -1075,8 +1090,13 @@ function parseEventDate(reasoning: string | null): Date | null {
   return new Date(Date.UTC(+yyyy, +mm - 1, +dd, +hh, +mi, +(ss || "0")));
 }
 
-function eventStatus(d: Date | null): { label: string; tone: string; ts: number } {
-  if (!d) return { label: "Sem data", tone: "text-muted-foreground", ts: 0 };
+function eventStatus(d: Date | null, robotName?: string | null): { label: string; tone: string; ts: number } {
+  // Non-sports signals (Athena B3, Kraken crypto) don't carry event dates.
+  // Show robot-appropriate copy instead of the misleading "Sem data".
+  if (!d) {
+    const isSports = (robotName ?? "").toLowerCase().includes("oracle");
+    return { label: isSports ? "Sem data" : "—", tone: "text-muted-foreground", ts: 0 };
+  }
   const now = Date.now();
   const delta = d.getTime() - now;
   if (delta < -3 * 60 * 60 * 1000) return { label: "Finalizado", tone: "text-muted-foreground", ts: d.getTime() };
@@ -1114,14 +1134,14 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
   const r = parseReasoning(s.reasoning);
   const ctx = teams ? { home: teams.home, away: teams.away, market: teams.market, outcome: teams.outcome, edgePct: conf, decisionId: s.id, ...r } : null;
   const evd = parseEventDate(s.reasoning);
-  const evs = eventStatus(evd);
+  const evs = eventStatus(evd, s.robotName);
   return (
     <Card className="bg-card border-border">
       <CardContent className="p-3 flex items-start justify-between gap-3 flex-wrap">
         <div className="flex-1 min-w-[260px]">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <Badge variant="outline" className="bg-profit/10 text-profit border-profit/30 text-[10px]">+{conf.toFixed(1)}%</Badge>
-            <Badge variant="outline" className={`text-[10px] ${outcomeColor[s.outcome]}`}>{outcomeLabel[s.outcome]}</Badge>
+            <Badge variant="outline" className={`text-[10px] ${outcomeColor[s.outcome]}`}>{outcomeLabelForRobot(s.outcome, s.robotName)}</Badge>
             {parseFloat(s.profitAmount ?? "0") > 0 && (
               <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">
                 Apostei R$ {parseFloat(s.profitAmount ?? "0").toFixed(2)}
