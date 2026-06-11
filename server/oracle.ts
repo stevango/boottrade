@@ -24,11 +24,48 @@ const DEFAULT_SPORTS_THEODDS = [
   "soccer_uefa_champs_league",
   "soccer_epl",
 ];
-// odds-api.io is league-based; default to high-coverage leagues only.
-const DEFAULT_LEAGUES_ODDSIO: { sport: string; league: string }[] = [
-  { sport: "football", league: "brazil-serie-a" },
+// odds-api.io is league-based; we discover the actual available leagues per
+// sport instead of hardcoding slugs (the slug for Brasileirão changes
+// between providers and we previously guessed wrong — "brazil-serie-a"
+// returned 404). The World Cup slug is reliable so we keep it as a fixed
+// fallback when discovery fails or runs out of quota.
+const FIXED_FALLBACK_LEAGUES: { sport: string; league: string }[] = [
   { sport: "football", league: "international-world-cup" },
 ];
+const DISCOVERY_SPORTS = ["football", "basketball"];
+const DISCOVERY_MAX_LEAGUES_PER_SPORT = 4;
+
+type DiscoveredLeague = { sport: string; league: string };
+let leagueDiscoveryCache: { leagues: DiscoveredLeague[]; fetchedAt: number } | null = null;
+const LEAGUE_DISCOVERY_TTL = 6 * 60 * 60 * 1000;
+
+async function discoverActiveLeagues(): Promise<DiscoveredLeague[]> {
+  if (leagueDiscoveryCache && Date.now() - leagueDiscoveryCache.fetchedAt < LEAGUE_DISCOVERY_TTL) {
+    return leagueDiscoveryCache.leagues;
+  }
+  // Lazy import to avoid pulling oddsIo into oracle's top-level cycle.
+  const { fetchLeagues } = await import("./oddsIo");
+  const found: DiscoveredLeague[] = [...FIXED_FALLBACK_LEAGUES];
+  for (const sport of DISCOVERY_SPORTS) {
+    try {
+      const leagues = await fetchLeagues(sport);
+      // Prefer leagues whose name suggests current-season top competitions —
+      // we pick the first N after a light name filter.
+      const ranked = leagues
+        .filter((l) => l.slug && !/u17|u19|u20|youth|reserve|women/i.test(l.name))
+        .slice(0, DISCOVERY_MAX_LEAGUES_PER_SPORT);
+      for (const l of ranked) {
+        if (!found.some((f) => f.sport === sport && f.league === l.slug)) {
+          found.push({ sport, league: l.slug });
+        }
+      }
+    } catch (e) {
+      console.warn(`[oracle] discoverActiveLeagues sport=${sport} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  leagueDiscoveryCache = { leagues: found, fetchedAt: Date.now() };
+  return found;
+}
 
 // Minimum edge % to persist as a signal. Below this it's noise.
 const MIN_EDGE_PCT = 2;
@@ -66,8 +103,17 @@ function reasoningFor(vb: ValueBet, source: string): string {
   return `[${source}] ${vb.bestPrice.toFixed(2)} @ ${vb.bestBook} vs média ${vb.avgPrice.toFixed(2)} entre ${vb.booksCount} casas (edge ${vb.edgePct.toFixed(1)}%)${when}.`;
 }
 
+// Soft circuit-breaker for The Odds API: when quota errors trigger, we skip
+// the next scans for an hour so we don't keep hammering and getting 401s
+// every minute. Reset when the calendar month rolls over (caller decides
+// when to invalidate).
+let theOddsQuotaCooldownUntil: number = 0;
+
 async function scanTheOdds(): Promise<{ results: { bets: ValueBet[]; source: string }[]; errors: string[]; configured: boolean }> {
   if (!(await isOddsConfigured())) return { results: [], errors: [], configured: false };
+  if (Date.now() < theOddsQuotaCooldownUntil) {
+    return { results: [], errors: [`theOdds em cooldown até ${new Date(theOddsQuotaCooldownUntil).toLocaleString("pt-BR")} (quota mensal esgotada)`], configured: true };
+  }
   const results: { bets: ValueBet[]; source: string }[] = [];
   const errors: string[] = [];
   for (const sport of DEFAULT_SPORTS_THEODDS) {
@@ -78,6 +124,12 @@ async function scanTheOdds(): Promise<{ results: { bets: ValueBet[]; source: str
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`theOdds:${sport} → ${msg.slice(0, 120)}`);
       console.warn(`[oracle] theOdds ${sport} failed:`, msg);
+      // 401 + "quota" or 429 → no point trying more sports this scan;
+      // they all share the same monthly bucket. Set cooldown to next hour.
+      if (msg.includes("401") || msg.includes("429") || msg.toLowerCase().includes("quota")) {
+        theOddsQuotaCooldownUntil = Date.now() + 60 * 60 * 1000;
+        break;
+      }
     }
   }
   return { results, errors, configured: true };
@@ -87,12 +139,19 @@ async function scanOddsIo(): Promise<{ results: { bets: ValueBet[]; source: stri
   if (!(await isOddsIoConfigured())) return { results: [], errors: [], configured: false };
   const results: { bets: ValueBet[]; source: string }[] = [];
   const errors: string[] = [];
-  for (const { sport, league } of DEFAULT_LEAGUES_ODDSIO) {
+  const leagues = await discoverActiveLeagues();
+  for (const { sport, league } of leagues) {
     try {
       const { valueBets } = await fetchOddsIoOpportunities({ sport, league, edgeThresholdPct: MIN_EDGE_PCT });
       if (valueBets.length > 0) results.push({ bets: valueBets, source: `oddsIo:${league}` });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // Stop scanning further leagues if we hit a rate limit — they all share
+      // the same quota window.
+      if (msg.includes("429") || msg.toLowerCase().includes("rate")) {
+        errors.push(`oddsIo:${league} → rate limit, parando`);
+        break;
+      }
       errors.push(`oddsIo:${league} → ${msg.slice(0, 120)}`);
       console.warn(`[oracle] oddsIo ${league} failed:`, msg);
     }
