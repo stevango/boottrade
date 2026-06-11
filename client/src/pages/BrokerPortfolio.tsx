@@ -2,9 +2,12 @@ import AppLayout from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Wallet, Loader2, RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Wallet, Loader2, RefreshCw, TrendingUp, TrendingDown, Send } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
+import { toast } from "sonner";
 
 type Broker = "paper" | "clear" | "ibkr" | "mercado_bitcoin";
 
@@ -69,6 +72,8 @@ export default function BrokerPortfolio() {
             </CardContent>
           </Card>
         )}
+
+        <ManualOrderCard onPlaced={() => utils.oms.accountSnapshot.invalidate()} />
 
         {!acc.isLoading && !hasError && a && (
           <>
@@ -140,5 +145,60 @@ export default function BrokerPortfolio() {
         )}
       </div>
     </AppLayout>
+  );
+}
+
+function ManualOrderCard({ onPlaced }: { onPlaced: () => void }) {
+  const [symbol, setSymbol] = useState("PETR4");
+  const [side, setSide] = useState<"BUY" | "SELL">("BUY");
+  const [stake, setStake] = useState("100");
+  const placeMut = trpc.oms.placeManual.useMutation({
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(`Ordem ${side} ${symbol} enviada via ${r.route}: ${r.filledQuantity} unid${r.averagePrice ? ` @ R$ ${r.averagePrice.toFixed(2)}` : ""}`);
+        onPlaced();
+      } else {
+        toast.error(r.reason);
+      }
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <Card className="bg-card border-border">
+      <CardContent className="p-4">
+        <p className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+          <Send className="w-4 h-4 text-primary" /> Execução manual
+        </p>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Dispara uma ordem direto pra o broker do modo ativo (configurado em <a href="/integrations" className="text-primary underline">Integrações → OMS</a>).
+          Use pra testar o pipeline ou bootstrap de posições em modo Paper.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Símbolo</Label>
+            <Input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="PETR4" className="bg-secondary border-border" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Lado</Label>
+            <div className="flex gap-1">
+              <button onClick={() => setSide("BUY")} className={`flex-1 py-1.5 rounded text-xs border ${side === "BUY" ? "bg-profit/20 text-profit border-profit/40" : "bg-secondary border-border text-muted-foreground"}`}>BUY</button>
+              <button onClick={() => setSide("SELL")} className={`flex-1 py-1.5 rounded text-xs border ${side === "SELL" ? "bg-loss/20 text-loss border-loss/40" : "bg-secondary border-border text-muted-foreground"}`}>SELL</button>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Stake (R$)</Label>
+            <Input type="number" min="1" step="1" value={stake} onChange={(e) => setStake(e.target.value)} className="bg-secondary border-border" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground opacity-0">Ação</Label>
+            <Button onClick={() => placeMut.mutate({ symbol, side, stake: parseFloat(stake) || 0 })}
+              disabled={placeMut.isPending || !symbol || !stake}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+              {placeMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />} Enviar
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

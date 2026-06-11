@@ -1206,8 +1206,8 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
             </Button>
           )}
           {/* Non-sports signals (Athena B3, Kraken crypto) have no match
-              analysis flow. Show a direct OMS button so the user can route
-              the order in one click. */}
+              analysis flow. Show a stock advisor button + direct OMS button
+              so the user can review and route the order in one click. */}
           {!ctx && isPending && (() => {
             const parts = s.asset.split("|").map((p) => p.trim());
             const symbol = parts[0];
@@ -1215,11 +1215,75 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
             const isExecutable = /^[A-Z0-9]{4,7}$/.test(symbol);
             if (!isExecutable) return null;
             const side: "BUY" | "SELL" = sideRaw === "sell" ? "SELL" : "BUY";
-            return <DirectOmsButton symbol={symbol} side={side} decisionId={s.id} />;
+            const isCrypto = symbol.endsWith("BRL");
+            return <>
+              <StockAdvisorButton
+                decisionId={s.id}
+                symbol={symbol}
+                side={side.toLowerCase() as "buy" | "sell"}
+                confidence={conf}
+                bestPrice={parseFloat(/R\$\s*([\d.]+)/.exec(s.reasoning ?? "")?.[1] ?? "0")}
+                reasoning={s.reasoning ?? ""}
+                assetClass={isCrypto ? "crypto" : "stock"}
+              />
+              <DirectOmsButton symbol={symbol} side={side} decisionId={s.id} />
+            </>;
           })()}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function StockAdvisorButton({ decisionId, symbol, side, confidence, bestPrice, reasoning, assetClass }:
+  { decisionId: number; symbol: string; side: "buy" | "sell"; confidence: number; bestPrice: number; reasoning: string; assetClass: "stock" | "crypto" }) {
+  const mut = trpc.stockAdvise.advise.useMutation();
+  const [open, setOpen] = useState(false);
+
+  const submit = () => {
+    setOpen(true);
+    mut.mutate({ decisionId, symbol, side, confidence, bestPrice, reasoning, assetClass });
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="ghost" className="text-[11px] text-primary hover:bg-primary/10" onClick={submit} disabled={mut.isPending}>
+        {mut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Pedir orientação
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-card border-border max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-foreground text-base flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary" /> Consultor IA · {symbol} {side.toUpperCase()}
+            </DialogTitle>
+          </DialogHeader>
+          {mut.isPending && <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}
+          {mut.data && mut.data.configured === false && (
+            <div className="p-3 rounded bg-warning/5 border border-warning/20 text-xs text-muted-foreground">{mut.data.error}</div>
+          )}
+          {mut.data && mut.data.error && mut.data.configured && (
+            <div className="p-3 rounded bg-loss/5 border border-loss/20 text-xs text-loss">{mut.data.error}</div>
+          )}
+          {mut.data?.intelligence && mut.data.advice && (
+            <div className="space-y-3">
+              <IntelligencePanel bi={{
+                decision: mut.data.intelligence.decision,
+                ourProbabilityPct: null,
+                marketImpliedPct: null,
+                ourEdgePct: null,
+                reportedEdgePct: confidence,
+                kellyPct: null,
+                sampleQuality: mut.data.intelligence.trendStrength >= 80 ? "alta" : mut.data.intelligence.trendStrength >= 60 ? "média" : "baixa",
+                recommendedStakeBrl: mut.data.intelligence.recommendedStakeBrl,
+                expectedReturnBrl: 0,
+                bullets: mut.data.intelligence.bullets,
+              }} />
+              <AdviceRender text={mut.data.advice} />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

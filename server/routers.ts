@@ -42,6 +42,7 @@ import { placeBetForSignal, settleBetfairBetsForUser, isAutoBetEnabled, getAutoB
 import { runAthenaForUser } from "./athena";
 import { runKrakenForUser } from "./kraken";
 import { resetPaperPortfolio } from "./brokers/paper";
+import { adviseStock } from "./stockAdvisor";
 import { getWebhookConfig, setWebhookConfig, testWebhook } from "./webhooks";
 import { getOmsConfig, setOmsConfig, executeSignal } from "./oms";
 import { CONNECTORS } from "./brokers/registry";
@@ -213,6 +214,46 @@ export const appRouter = router({
 
   kraken: router({
     runNow: protectedProcedure.mutation(async ({ ctx }) => runKrakenForUser(ctx.user.id)),
+  }),
+
+  stockAdvise: router({
+    advise: protectedProcedure
+      .input(z.object({
+        decisionId: z.number(),
+        symbol: z.string().min(1).max(20),
+        side: z.enum(["buy", "sell"]),
+        confidence: z.number().min(0).max(100),
+        bestPrice: z.number().min(0.01).max(1_000_000),
+        reasoning: z.string().optional(),
+        assetClass: z.enum(["stock", "crypto"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!(await isLLMConfigured())) {
+          return { configured: false as const, intelligence: null, advice: null, error: "Consultor IA não configurado. Cole OPENAI_API_KEY em /integrations." };
+        }
+        try {
+          const bankroll = await getUserBalance(ctx.user.id);
+          const { intelligence, advice } = await adviseStock(input, bankroll);
+          // Persist for /recommendations history
+          await addSignalAdvice(ctx.user.id, {
+            decisionId: input.decisionId,
+            home: input.symbol,
+            away: "",
+            market: input.assetClass === "crypto" ? "crypto" : "stock",
+            outcome: input.side.toUpperCase(),
+            bestPrice: input.bestPrice,
+            edgePct: input.confidence,
+            prompt: "stock-advise",
+            advice,
+            decision: intelligence.decision,
+            recommendedStakeBrl: intelligence.recommendedStakeBrl,
+            model: "auto",
+          });
+          return { configured: true as const, intelligence, advice, error: null };
+        } catch (e) {
+          return { configured: true as const, intelligence: null, advice: null, error: e instanceof Error ? e.message : String(e) };
+        }
+      }),
   }),
 
   oms: router({

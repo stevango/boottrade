@@ -136,36 +136,54 @@ export const paperConnector: BrokerConnector = {
           placedAt: new Date().toISOString(),
         };
       }
-      // Increase position or open new
+      // BUY can either open a long, increase a long, or close/reduce a short.
       const existing = positions.find((p) => p.asset.symbol === req.asset.symbol);
       if (existing) {
-        const totalCost = existing.averageEntryPrice * existing.quantity + cost;
-        existing.quantity += req.quantity;
-        existing.averageEntryPrice = totalCost / existing.quantity;
+        if (existing.quantity < 0) {
+          // Closing/reducing a short — realized PnL credited to cash (already added below)
+          existing.quantity += req.quantity;
+          if (existing.quantity > 0) {
+            existing.averageEntryPrice = fillPrice;
+          } else if (existing.quantity === 0) {
+            // Short fully closed
+          }
+        } else {
+          const totalCost = existing.averageEntryPrice * existing.quantity + cost;
+          existing.quantity += req.quantity;
+          existing.averageEntryPrice = totalCost / existing.quantity;
+        }
       } else {
         positions.push({ asset: req.asset, quantity: req.quantity, averageEntryPrice: fillPrice });
       }
+      const filtered = positions.filter((p) => p.quantity !== 0);
       await setPaperBalance(cash - cost);
-      await setPaperPositions(positions);
+      await setPaperPositions(filtered);
     } else {
-      // SELL — must have position
+      // SELL — closes long, opens short, or increases existing short.
       const existing = positions.find((p) => p.asset.symbol === req.asset.symbol);
-      if (!existing || existing.quantity < req.quantity) {
-        return {
-          brokerOrderId: `paper-${Date.now()}-${paperOrderCounter++}`,
-          status: "REJECTED",
-          asset: req.asset, side: req.side, quantity: req.quantity, filledQuantity: 0,
-          message: `Posição paper insuficiente em ${req.asset.symbol}.`,
-          placedAt: new Date().toISOString(),
-        };
+      if (existing && existing.quantity >= req.quantity) {
+        // Reducing/closing a long
+        existing.quantity -= req.quantity;
+      } else if (existing && existing.quantity > 0) {
+        // Partial close, then open short with the remainder
+        const closing = existing.quantity;
+        const remaining = req.quantity - closing;
+        existing.quantity = -remaining;
+        existing.averageEntryPrice = fillPrice;
+      } else {
+        // Opening a new short (or increasing an existing short)
+        if (existing) {
+          // existing short — average down the entry price
+          const totalCost = Math.abs(existing.averageEntryPrice * existing.quantity) + cost;
+          existing.quantity -= req.quantity;
+          existing.averageEntryPrice = totalCost / Math.abs(existing.quantity);
+        } else {
+          positions.push({ asset: req.asset, quantity: -req.quantity, averageEntryPrice: fillPrice });
+        }
       }
-      existing.quantity -= req.quantity;
-      const realized = (fillPrice - existing.averageEntryPrice) * req.quantity;
-      const filtered = positions.filter((p) => p.quantity > 0);
+      const filtered = positions.filter((p) => p.quantity !== 0);
       await setPaperBalance(cash + cost);
       await setPaperPositions(filtered);
-      // realized PnL is implicit in the cash change
-      void realized;
     }
 
     return {
