@@ -286,6 +286,7 @@ export default function Integrations() {
         <Section title="Comportamento dos Robôs" icon={Bot}>
           <OracleAutoAdviseCard isAdmin={isAdmin} />
           <BetfairAutoBetCard isAdmin={isAdmin} />
+          <WebhookOutCard isAdmin={isAdmin} />
         </Section>
 
         <Card className="bg-card border-primary/20">
@@ -718,6 +719,123 @@ function BetfairAutoBetCard({ isAdmin }: { isAdmin: boolean }) {
         {!isAdmin && (
           <p className="text-[11px] text-muted-foreground italic">Apenas administradores podem alterar essa configuração.</p>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WebhookOutCard({ isAdmin }: { isAdmin: boolean }) {
+  const cfg = trpc.webhooks.get.useQuery();
+  const utils = trpc.useUtils();
+  const setMut = trpc.webhooks.set.useMutation({
+    onSuccess: () => { toast.success("Webhook salvo."); utils.webhooks.get.invalidate(); },
+    onError: () => toast.error("Falha ao salvar."),
+  });
+  const testMut = trpc.webhooks.test.useMutation();
+  const [url, setUrl] = useState("");
+  const [secret, setSecret] = useState("");
+  const enabled = cfg.data?.enabled ?? false;
+  const onlySim = cfg.data?.onlySim ?? true;
+  const currentUrl = cfg.data?.url ?? "";
+
+  return (
+    <Card className="bg-card border-border sm:col-span-2 lg:col-span-3">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base text-foreground flex items-center gap-2">
+          📡 Webhook de Saída (SmarttBot / TradingView / n8n)
+          {enabled
+            ? <Badge variant="outline" className="bg-profit/10 text-profit border-profit/20 text-[10px]">Ativo</Badge>
+            : <Badge variant="outline" className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20 text-[10px]">Desligado</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Cada sinal SIM dispara um POST JSON pra URL configurada — perfeito pra plugar SmarttBot, TradingView strategies,
+          n8n/Zapier ou um EA do MetaTrader. É o caminho realista pra automação de B3 (corretoras brasileiras não têm API).
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">URL do webhook</Label>
+          <div className="flex gap-2 flex-wrap">
+            <Input
+              value={url || currentUrl}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://hook.smarttbot.com/.../seu-id"
+              className="bg-secondary border-border flex-1 min-w-[280px]"
+              disabled={!isAdmin}
+            />
+            <Button size="sm"
+              onClick={() => { if (url) setMut.mutate({ url }); }}
+              disabled={!isAdmin || !url || setMut.isPending}>
+              <Save className="w-3 h-3 mr-1" /> Salvar
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Segredo (opcional) — vai no header X-Webhook-Secret</Label>
+          <div className="flex gap-2 flex-wrap">
+            <Input
+              type="password" autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder={cfg.data?.hasSecret ? "•••••••• (já configurado)" : "Opcional"}
+              className="bg-secondary border-border flex-1 min-w-[280px]"
+              disabled={!isAdmin}
+            />
+            <Button size="sm" variant="outline"
+              onClick={() => { if (secret) setMut.mutate({ secret }); setSecret(""); }}
+              disabled={!isAdmin || !secret || setMut.isPending}>
+              Salvar segredo
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+          <div>
+            <Label className="text-sm text-foreground">Ativar webhook</Label>
+            <p className="text-[11px] text-muted-foreground">Cada novo sinal SIM dispara um POST.</p>
+          </div>
+          <Switch checked={enabled} onCheckedChange={(v) => setMut.mutate({ enabled: v })} disabled={!isAdmin || setMut.isPending} />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <Label className="text-sm text-foreground">Apenas SIM (recomendado)</Label>
+            <p className="text-[11px] text-muted-foreground">Quando ligado, só dispara webhook quando IA decide SIM. Desligado, dispara em TODOS os sinais (NÃO/CAUTELOSO também).</p>
+          </div>
+          <Switch checked={onlySim} onCheckedChange={(v) => setMut.mutate({ onlySim: v })} disabled={!isAdmin || setMut.isPending} />
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <Button size="sm" variant="outline"
+            onClick={() => testMut.mutate(undefined as any, {
+              onSuccess: (r) => r.ok ? toast.success(`Webhook OK · HTTP ${r.status}`) : toast.error(`Falhou: ${r.error}`),
+              onError: () => toast.error("Falha ao testar."),
+            })}
+            disabled={!isAdmin || testMut.isPending || !enabled}>
+            <Zap className="w-3 h-3 mr-1" /> Testar agora
+          </Button>
+          {testMut.data && (
+            <span className={`text-[11px] ${testMut.data.ok ? "text-profit" : "text-loss"}`}>
+              {testMut.data.ok ? `✓ ${testMut.data.status}` : `⚠ ${testMut.data.error}`}
+            </span>
+          )}
+        </div>
+
+        <div className="p-3 rounded bg-secondary/40 border border-border">
+          <p className="text-[11px] text-foreground font-medium mb-1">Formato do payload:</p>
+          <pre className="text-[10px] text-muted-foreground overflow-x-auto">{`{
+  "robot": "athena-ai",
+  "source": "athena",
+  "asset": "PETR4",
+  "side": "buy",
+  "confidence": 78,
+  "reasoning": "Golden Cross ativo...",
+  "bestPrice": 38.45,
+  "decision": "SIM",
+  "generatedAt": "2026-06-11T20:00:00Z"
+}`}</pre>
+        </div>
       </CardContent>
     </Card>
   );

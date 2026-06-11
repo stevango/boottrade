@@ -10,6 +10,7 @@ import { isOddsConfigured, fetchOpportunities as fetchTheOddsOpportunities, fetc
 import { isOddsIoConfigured, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { isApiFootballConfigured, analyzeMatch, buildAdvisorPrompt, computeBetIntelligence, type AdviseInput } from "./matchAnalysis";
 import { isAutoBetEnabled, getAutoBetMaxStakeBrl, placeBetForSignal } from "./betfairExecutor";
+import { postSignalToWebhook } from "./webhooks";
 import { isLLMConfigured, chatComplete } from "./llm";
 import type { ValueBet } from "./oddsAnalysis";
 
@@ -205,6 +206,24 @@ async function autoAdviseSignal(userId: number, decisionId: number, bet: ValueBe
       prompt, advice, model: "auto",
       decision: intelligence.decision,
       recommendedStakeBrl: intelligence.recommendedStakeBrl,
+    });
+
+    // Webhook OUT — fire-and-forget, gated by onlySim filter inside.
+    void postSignalToWebhook({
+      robot: "oracle-ai",
+      source: "oracle",
+      decisionId,
+      asset: `${home} × ${away}`,
+      side: "buy",
+      market: bet.market,
+      outcome: bet.outcome,
+      confidence: bet.edgePct,
+      reasoning: input.market + " → " + input.outcome,
+      bestPrice: bet.bestPrice,
+      recommendedStakeBrl: intelligence.recommendedStakeBrl,
+      decision: intelligence.decision,
+      commence: bet.commence,
+      generatedAt: new Date().toISOString(),
     });
 
     // Auto-bet on Betfair if enabled AND advisor said SIM AND we have a

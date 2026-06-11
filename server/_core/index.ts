@@ -9,6 +9,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { runOracleForAllActive, tryResolveAllOracleSignals, listOracleActiveUsers } from "../oracle";
+import { runAthenaForAllActive } from "../athena";
 import { settleBetfairBetsForUser } from "../betfairExecutor";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -123,6 +124,19 @@ async function startServer() {
     };
     setTimeout(() => { tickOracle(); setInterval(tickOracle, ORACLE_INTERVAL_MS); }, ORACLE_FIRST_DELAY_MS);
     setTimeout(() => { tickResolve(); setInterval(tickResolve, RESOLVE_INTERVAL_MS); }, RESOLVE_FIRST_DELAY_MS);
+
+    // Athena AI (B3 stock signals) — runs every 4 hours during market hours.
+    // Stocks move slower than sports odds; hourly would just duplicate.
+    const tickAthena = async () => {
+      try {
+        const r = await runAthenaForAllActive();
+        const total = r.reduce((s, x) => s + x.created, 0);
+        if (total > 0) console.log(`[athena] scan: ${r.length} usuário(s), ${total} novos sinais`);
+      } catch (e) {
+        console.error("[athena] scan tick failed:", e);
+      }
+    };
+    setTimeout(() => { tickAthena(); setInterval(tickAthena, 4 * 60 * 60 * 1000); }, 3 * 60 * 1000);
 
     // Betfair settlement — every 10 min query listClearedOrders for each
     // active Oracle user and mirror real-money P&L into brain_decisions.

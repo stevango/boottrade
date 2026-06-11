@@ -39,6 +39,8 @@ import { isOddsConfigured, fetchSports, fetchOpportunities } from "./oddsData";
 import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as fetchOddsIoLeagues, fetchOpportunities as fetchOddsIoOpportunities } from "./oddsIo";
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
 import { placeBetForSignal, settleBetfairBetsForUser, isAutoBetEnabled, getAutoBetMaxStakeBrl, setAutoBetConfig, findMarketForSignal } from "./betfairExecutor";
+import { runAthenaForUser } from "./athena";
+import { getWebhookConfig, setWebhookConfig, testWebhook } from "./webhooks";
 import { bets as betsTable } from "../drizzle/schema";
 import { eq as drizzleEq, desc as drizzleDesc } from "drizzle-orm";
 import { getDb as getDrizzleDb } from "./db";
@@ -179,6 +181,30 @@ export const appRouter = router({
         if (input.dailyMaxStakePct != null) await setAppSetting("DAILY_MAX_STAKE_PCT", String(input.dailyMaxStakePct));
         return { success: true };
       }),
+  }),
+
+  webhooks: router({
+    get: protectedProcedure.query(async () => {
+      const cfg = await getWebhookConfig();
+      // Never echo the secret back to the browser.
+      return { url: cfg.url, enabled: cfg.enabled, onlySim: cfg.onlySim, hasSecret: !!cfg.secret };
+    }),
+    set: adminProcedure
+      .input(z.object({
+        url: z.string().url().max(500).optional(),
+        secret: z.string().max(256).optional(),
+        enabled: z.boolean().optional(),
+        onlySim: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        await setWebhookConfig(input);
+        return { success: true };
+      }),
+    test: adminProcedure.mutation(async () => testWebhook()),
+  }),
+
+  athena: router({
+    runNow: protectedProcedure.mutation(async ({ ctx }) => runAthenaForUser(ctx.user.id)),
   }),
 
   betfair: router({
