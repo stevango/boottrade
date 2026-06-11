@@ -40,6 +40,8 @@ import { isOddsIoConfigured, fetchSports as fetchOddsIoSports, fetchLeagues as f
 import { runOracleForUser, tryResolveOracleSignals } from "./oracle";
 import { placeBetForSignal, settleBetfairBetsForUser, isAutoBetEnabled, getAutoBetMaxStakeBrl, setAutoBetConfig, findMarketForSignal } from "./betfairExecutor";
 import { runAthenaForUser } from "./athena";
+import { runKrakenForUser } from "./kraken";
+import { resetPaperPortfolio } from "./brokers/paper";
 import { getWebhookConfig, setWebhookConfig, testWebhook } from "./webhooks";
 import { getOmsConfig, setOmsConfig, executeSignal } from "./oms";
 import { CONNECTORS } from "./brokers/registry";
@@ -209,6 +211,10 @@ export const appRouter = router({
     runNow: protectedProcedure.mutation(async ({ ctx }) => runAthenaForUser(ctx.user.id)),
   }),
 
+  kraken: router({
+    runNow: protectedProcedure.mutation(async ({ ctx }) => runKrakenForUser(ctx.user.id)),
+  }),
+
   oms: router({
     config: protectedProcedure.query(async () => getOmsConfig()),
     setConfig: adminProcedure
@@ -232,6 +238,20 @@ export const appRouter = router({
         const c = CONNECTORS[input.broker];
         if (!c) return null;
         try { return await c.getAccount(); } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+      }),
+    resetPaper: adminProcedure.mutation(async () => {
+      await resetPaperPortfolio();
+      return { success: true };
+    }),
+    orderHistory: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(500).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const db = await getDrizzleDb();
+        if (!db) return [];
+        return db.select().from(betsTable)
+          .where(drizzleEq(betsTable.userId, ctx.user.id))
+          .orderBy(drizzleDesc(betsTable.placedAt))
+          .limit(input?.limit ?? 100);
       }),
     placeManual: protectedProcedure
       .input(z.object({

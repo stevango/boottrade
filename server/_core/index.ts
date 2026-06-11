@@ -10,6 +10,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { runOracleForAllActive, tryResolveAllOracleSignals, listOracleActiveUsers } from "../oracle";
 import { runAthenaForAllActive } from "../athena";
+import { runKrakenForAllActive } from "../kraken";
 import { settleBetfairBetsForUser } from "../betfairExecutor";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -137,6 +138,18 @@ async function startServer() {
       }
     };
     setTimeout(() => { tickAthena(); setInterval(tickAthena, 4 * 60 * 60 * 1000); }, 3 * 60 * 1000);
+
+    // Kraken AI (crypto) — every 2h (crypto moves faster than stocks).
+    const tickKraken = async () => {
+      try {
+        const r = await runKrakenForAllActive();
+        const total = r.reduce((s, x) => s + x.created, 0);
+        if (total > 0) console.log(`[kraken] scan: ${r.length} usuário(s), ${total} novos sinais`);
+      } catch (e) {
+        console.error("[kraken] scan tick failed:", e);
+      }
+    };
+    setTimeout(() => { tickKraken(); setInterval(tickKraken, 2 * 60 * 60 * 1000); }, 4 * 60 * 1000);
 
     // Betfair settlement — every 10 min query listClearedOrders for each
     // active Oracle user and mirror real-money P&L into brain_decisions.

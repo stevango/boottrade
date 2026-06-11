@@ -65,6 +65,12 @@ function simulateSlippage(price: number): number {
 
 let paperOrderCounter = 1;
 
+// Resets the paper portfolio back to its starting state.
+export async function resetPaperPortfolio(startingBalance = 10000): Promise<void> {
+  await setPaperBalance(startingBalance);
+  await setPaperPositions([]);
+}
+
 export const paperConnector: BrokerConnector = {
   name: "Paper",
   market: "B3",

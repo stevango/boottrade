@@ -60,6 +60,24 @@ export default function Signals() {
     },
     onError: () => toast.error("Falha ao registrar."),
   });
+  const runAthenaMut = trpc.athena.runNow.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Athena rodou: ${r.created} sinais novos (${r.analyzed} ativos analisados, ${r.skipped} pulados)`);
+      utils.signals.list.invalidate();
+    },
+    onError: (e) => toast.error(`Athena falhou: ${e.message}`),
+  });
+  const runKrakenMut = trpc.kraken.runNow.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Kraken rodou: ${r.created} sinais novos (${r.analyzed} pares analisados, ${r.skipped} pulados)`);
+      utils.signals.list.invalidate();
+    },
+    onError: (e) => toast.error(`Kraken falhou: ${e.message}`),
+  });
+  const resetPaperMut = trpc.oms.resetPaper.useMutation({
+    onSuccess: () => toast.success("Paper portfolio resetado pra R$ 10.000 e sem posições."),
+    onError: () => toast.error("Falha ao resetar paper."),
+  });
   const runMut = trpc.signals.runOracleNow.useMutation({
     onSuccess: (r) => {
       if (r.error) toast.error(r.error);
@@ -200,7 +218,18 @@ export default function Signals() {
               <MinusCircle className="w-3 h-3 mr-1" /> Não apostei em nada ({pending.length})
             </Button>
             <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-              {runMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Rodar Oracle agora
+              {runMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />} Oracle
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => runAthenaMut.mutate()} disabled={runAthenaMut.isPending}>
+              {runAthenaMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <TrendingUp className="w-3 h-3 mr-1" />} Athena (B3)
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => runKrakenMut.mutate()} disabled={runKrakenMut.isPending}>
+              {runKrakenMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <span className="text-sm mr-1">₿</span>} Kraken (crypto)
+            </Button>
+            <Button size="sm" variant="ghost" className="text-[11px] text-muted-foreground"
+              onClick={() => { if (confirm("Resetar paper portfolio pra R$ 10.000 e zero posições?")) resetPaperMut.mutate(); }}
+              disabled={resetPaperMut.isPending}>
+              Reset Paper
             </Button>
           </div>
         </div>

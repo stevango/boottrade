@@ -50,6 +50,7 @@ const Signals = lazyWithReload(() => import("./pages/Signals"));
 const Recommendations = lazyWithReload(() => import("./pages/Recommendations"));
 const Simulation = lazyWithReload(() => import("./pages/Simulation"));
 const BrokerPortfolio = lazyWithReload(() => import("./pages/BrokerPortfolio"));
+const OrderHistory = lazyWithReload(() => import("./pages/OrderHistory"));
 
 function PageFallback() {
   return (
@@ -87,6 +88,7 @@ function Router() {
         <Route path="/recommendations" component={Recommendations} />
         <Route path="/simulation" component={Simulation} />
         <Route path="/broker-portfolio" component={BrokerPortfolio} />
+        <Route path="/order-history" component={OrderHistory} />
         <Route path="/integrations" component={Integrations} />
         <Route path="/brokers" component={Integrations} />
         <Route path="/404" component={NotFound} />
