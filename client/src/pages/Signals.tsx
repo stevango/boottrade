@@ -55,6 +55,18 @@ function outcomeLabelForRobot(outcome: string, robotName?: string | null): strin
   return "Aguardando confirmação";
 }
 
+// Robot-aware verb forms: sports use "Apostei/aposta" (betting), stocks &
+// crypto use "Investi/operação" (investing). Used by Mark buttons and the
+// confirm dialog copy so the language matches the asset class.
+type VerbForms = { past: string; pastNeg: string; noun: string; place: string };
+function verbsForRobot(robotName?: string | null): VerbForms {
+  const r = (robotName ?? "").toLowerCase();
+  if (r.includes("oracle")) {
+    return { past: "Apostei", pastNeg: "Não apostei", noun: "aposta", place: "casa de apostas" };
+  }
+  return { past: "Investi", pastNeg: "Não investi", noun: "operação", place: "corretora" };
+}
+
 export default function Signals() {
   const { data, isLoading, refetch, isFetching } = trpc.signals.list.useQuery(
     { limit: 100 },
@@ -122,7 +134,7 @@ export default function Signals() {
     onError: () => toast.error("Falha ao limpar pendentes."),
   });
 
-  const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral" } | null>(null);
+  const [marking, setMarking] = useState<{ id: number; outcome: "profit" | "loss" | "neutral"; robotName?: string | null } | null>(null);
   const [profit, setProfit] = useState<string>("");
   type AnalyzeCtx = { home: string; away: string; market: string; outcome: string; bestBook?: string; bestPrice?: number; avgPrice?: number; edgePct?: number; commence?: string; decisionId?: number };
   const [analyzing, setAnalyzing] = useState<AnalyzeCtx | null>(null);
@@ -307,9 +319,9 @@ export default function Signals() {
                     <SelectContent>
                       <SelectItem value="__all__">Todos</SelectItem>
                       <SelectItem value="pending">Sugestão pendente</SelectItem>
-                      <SelectItem value="profit">Apostei • Ganhei</SelectItem>
-                      <SelectItem value="loss">Apostei • Perdi</SelectItem>
-                      <SelectItem value="neutral">Não apostei</SelectItem>
+                      <SelectItem value="profit">Apostei/Investi • Ganhei</SelectItem>
+                      <SelectItem value="loss">Apostei/Investi • Perdi</SelectItem>
+                      <SelectItem value="neutral">Não apostei/investi</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -339,7 +351,7 @@ export default function Signals() {
               <Clock className="w-4 h-4 text-warning" />
               {whenFilter === "today" ? "Jogos de hoje" : whenFilter === "tomorrow" ? "Jogos de amanhã" : whenFilter === "upcoming" ? "Próximos jogos" : whenFilter === "past" ? "Jogos passados" : "Pendentes"} ({pending.length})
             </h2>
-            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} hasAdvice={advisedSet.has(s.id)} onMark={(o) => { setMarking({ id: s.id, outcome: o }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
+            <div className="space-y-2">{pending.map((s) => <SignalRow key={s.id} s={s} hasAdvice={advisedSet.has(s.id)} onMark={(o) => { setMarking({ id: s.id, outcome: o, robotName: s.robotName }); setProfit(""); }} onAnalyze={(ctx) => { setAnalyzing(ctx); analyzeMut.mutate({ home: ctx.home, away: ctx.away }); }} />)}</div>
           </section>
         )}
 
@@ -369,22 +381,25 @@ export default function Signals() {
 
       <Dialog open={!!marking} onOpenChange={(o) => !o && setMarking(null)}>
         <DialogContent className="bg-card border-border max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-foreground text-base">
-              {marking?.outcome === "profit" ? "Apostei e ganhei" : marking?.outcome === "loss" ? "Apostei e perdi" : "Não apostei nessa sugestão"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 mt-2">
-            {marking?.outcome === "neutral" ? (
-              <p className="text-xs text-muted-foreground">
-                Confirma que você <strong>não fez essa aposta</strong>? Ela vai ser marcada como neutra e sair da lista de pendentes.
-                Não conta no seu P&L nem no aprendizado do robô.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">
-                  {marking?.outcome === "profit" ? "Quanto você ganhou (R$)?" : "Quanto você perdeu (R$, número positivo)?"}
-                </label>
+          {(() => {
+            const v = verbsForRobot(marking?.robotName);
+            return <>
+              <DialogHeader>
+                <DialogTitle className="text-foreground text-base">
+                  {marking?.outcome === "profit" ? `${v.past} e ganhei` : marking?.outcome === "loss" ? `${v.past} e perdi` : `${v.pastNeg} nessa sugestão`}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 mt-2">
+                {marking?.outcome === "neutral" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Confirma que você <strong>não fez essa {v.noun}</strong>? Ela vai ser marcada como neutra e sair da lista de pendentes.
+                    Não conta no seu P&L nem no aprendizado do robô.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      {marking?.outcome === "profit" ? "Quanto você ganhou (R$)?" : "Quanto você perdeu (R$, número positivo)?"}
+                    </label>
                 <Input
                   type="number" step="0.01" min="0"
                   value={profit}
@@ -393,18 +408,20 @@ export default function Signals() {
                   className="bg-secondary border-border"
                   autoFocus
                 />
-                <p className="text-[10px] text-muted-foreground">
-                  Este é o valor que entrou (ou saiu) da sua banca de verdade na casa de apostas. Se a aposta foi simulada, use 0.
-                </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Este é o valor que entrou (ou saiu) da sua banca de verdade na {v.place}. Se a {v.noun} foi simulada, use 0.
+                    </p>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setMarking(null)}>Cancelar</Button>
+                  <Button onClick={submitMarking} disabled={markMut.isPending} className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground">
+                    {markMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null} Registrar
+                  </Button>
+                </div>
               </div>
-            )}
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setMarking(null)}>Cancelar</Button>
-              <Button onClick={submitMarking} disabled={markMut.isPending} className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground">
-                {markMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null} Registrar
-              </Button>
-            </div>
-          </div>
+            </>;
+          })()}
         </DialogContent>
       </Dialog>
     </AppLayout>
@@ -1161,25 +1178,28 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
           {s.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{s.reasoning}</p>}
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          {isPending && (
-            <div className="flex gap-1 flex-wrap justify-end">
-              <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10"
-                title="Eu fiz essa aposta na minha casa de apostas e ganhei"
-                onClick={() => onMark("profit")}>
-                <CheckCircle2 className="w-3 h-3 mr-1" /> Apostei • Ganhei
-              </Button>
-              <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10"
-                title="Eu fiz essa aposta na minha casa de apostas e perdi"
-                onClick={() => onMark("loss")}>
-                <XCircle className="w-3 h-3 mr-1" /> Apostei • Perdi
-              </Button>
-              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground"
-                title="Eu NÃO fiz essa aposta — apenas ignorar essa sugestão e não contar no P&L"
-                onClick={() => onMark("neutral")}>
-                <MinusCircle className="w-3 h-3 mr-1" /> Não apostei
-              </Button>
-            </div>
-          )}
+          {isPending && (() => {
+            const v = verbsForRobot(s.robotName);
+            return (
+              <div className="flex gap-1 flex-wrap justify-end">
+                <Button size="sm" variant="outline" className="text-xs text-profit border-profit/30 hover:bg-profit/10"
+                  title={`Eu fiz essa ${v.noun} na minha ${v.place} e ganhei`}
+                  onClick={() => onMark("profit")}>
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> {v.past} • Ganhei
+                </Button>
+                <Button size="sm" variant="outline" className="text-xs text-loss border-loss/30 hover:bg-loss/10"
+                  title={`Eu fiz essa ${v.noun} na minha ${v.place} e perdi`}
+                  onClick={() => onMark("loss")}>
+                  <XCircle className="w-3 h-3 mr-1" /> {v.past} • Perdi
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs text-muted-foreground"
+                  title={`Eu NÃO fiz essa ${v.noun} — apenas ignorar essa sugestão e não contar no P&L`}
+                  onClick={() => onMark("neutral")}>
+                  <MinusCircle className="w-3 h-3 mr-1" /> {v.pastNeg}
+                </Button>
+              </div>
+            );
+          })()}
           {ctx && (
             <Button size="sm" variant="ghost" className="text-[11px] text-primary hover:bg-primary/10" onClick={() => onAnalyze(ctx)}>
               <BarChart2 className="w-3 h-3 mr-1" /> Analisar partida
