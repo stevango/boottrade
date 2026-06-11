@@ -641,6 +641,59 @@ function AccuracyCell({ label, acc, correct, wrong, pending }: { label: string; 
   );
 }
 
+function OmsExecuteOneClick({ ctx, intelligence }: { ctx: any; intelligence: any }) {
+  const placeMut = trpc.oms.placeManual.useMutation();
+  const cfg = trpc.oms.config.useQuery();
+  const [result, setResult] = useState<any>(null);
+  // Only show for stock signals (Athena format: "PETR4 | trend | buy")
+  if (!ctx) return null;
+  const symbol = ctx.home; // For Athena signals, "home" is the symbol
+  const isStock = /^[A-Z0-9]{4,6}$/.test(symbol);
+  if (!isStock) return null;
+  const routingMode = cfg.data?.routingMode ?? "off";
+  if (routingMode === "off") return null;
+
+  const submit = () => {
+    placeMut.mutate({
+      symbol,
+      side: ctx.outcome === "buy" || ctx.outcome === "BUY" ? "BUY" : "SELL",
+      stake: Math.min(intelligence.recommendedStakeBrl, 1000),
+    }, {
+      onSuccess: (r) => { setResult(r); if (r.ok) toast.success(`Ordem enviada via ${r.route}!`); else toast.error(r.reason); },
+      onError: (e) => { setResult({ ok: false, reason: e.message }); toast.error(e.message); },
+    });
+  };
+
+  return (
+    <div className={`p-3 rounded-lg border-2 ${routingMode === "paper" ? "border-primary/30 bg-primary/5" : "border-warning/30 bg-warning/5"}`}>
+      <p className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+        🎯 OMS · {routingMode === "paper" ? "Paper Trading" : routingMode.toUpperCase()}
+      </p>
+      {!result ? (
+        <>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Envia ordem {ctx.outcome === "buy" ? "BUY" : "SELL"} de {symbol} via {routingMode}, stake R$ {intelligence.recommendedStakeBrl.toFixed(2)}.
+          </p>
+          <Button size="sm" onClick={submit} disabled={placeMut.isPending}>
+            {placeMut.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Enviando...</> : <>🎯 Executar via OMS</>}
+          </Button>
+        </>
+      ) : result.ok ? (
+        <div className="p-2 rounded bg-profit/10 border border-profit/30 text-xs">
+          <p className="font-medium text-profit">✓ Ordem enviada</p>
+          <p className="text-muted-foreground mt-1">Broker: {result.route} · Status: {result.status} · Filled: {result.filledQuantity}{result.averagePrice ? ` @ R$ ${result.averagePrice.toFixed(2)}` : ""}</p>
+        </div>
+      ) : (
+        <div className="p-2 rounded bg-loss/10 border border-loss/30 text-xs">
+          <p className="font-medium text-loss">✗ Bloqueado</p>
+          <p className="text-muted-foreground mt-1">{result.reason}</p>
+          <Button size="sm" variant="ghost" className="mt-2 text-[11px]" onClick={() => setResult(null)}>Tentar de novo</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BetfairOneClick({ ctx, intelligence }: { ctx: any; intelligence: any }) {
   const placeMut = trpc.betfair.placeOneClick.useMutation();
   const [result, setResult] = useState<any>(null);
@@ -848,7 +901,10 @@ function AdvisorSection({ ctx }: { ctx: { home: string; away: string; market: st
       {r?.intelligence && <IntelligencePanel bi={r.intelligence} />}
       {r?.advice && <AdviceRender text={r.advice} />}
       {r?.intelligence?.decision === "SIM" && r?.intelligence?.recommendedStakeBrl > 0 && (
-        <BetfairOneClick ctx={ctx} intelligence={r.intelligence} />
+        <>
+          <BetfairOneClick ctx={ctx} intelligence={r.intelligence} />
+          <OmsExecuteOneClick ctx={ctx} intelligence={r.intelligence} />
+        </>
       )}
 
       {showHistory && past.length > 0 && (

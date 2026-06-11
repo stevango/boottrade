@@ -213,21 +213,21 @@ export const appRouter = router({
     config: protectedProcedure.query(async () => getOmsConfig()),
     setConfig: adminProcedure
       .input(z.object({
-        routingMode: z.enum(["off", "paper", "clear"]).optional(),
+        routingMode: z.enum(["off", "paper", "clear", "ibkr", "mercado_bitcoin"]).optional(),
         killSwitch: z.boolean().optional(),
         dailyMaxStakeBrl: z.number().min(0).max(1_000_000).optional(),
         maxPerOrderBrl: z.number().min(0).max(1_000_000).optional(),
       }))
       .mutation(async ({ input }) => { await setOmsConfig(input); return { success: true }; }),
     testBroker: protectedProcedure
-      .input(z.object({ broker: z.enum(["paper", "clear"]) }))
+      .input(z.object({ broker: z.enum(["paper", "clear", "ibkr", "mercado_bitcoin"]) }))
       .mutation(async ({ input }) => {
         const c = CONNECTORS[input.broker];
         if (!c) return { ok: false, message: "Broker desconhecido" };
         return c.testConnection();
       }),
     accountSnapshot: protectedProcedure
-      .input(z.object({ broker: z.enum(["paper", "clear"]) }))
+      .input(z.object({ broker: z.enum(["paper", "clear", "ibkr", "mercado_bitcoin"]) }))
       .query(async ({ input }) => {
         const c = CONNECTORS[input.broker];
         if (!c) return null;

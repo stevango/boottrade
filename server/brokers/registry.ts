@@ -4,24 +4,28 @@
 import type { BrokerConnector } from "./types";
 import { paperConnector } from "./paper";
 import { clearConnector } from "./clear";
+import { ibkrConnector } from "./interactiveBrokers";
+import { mercadoBitcoinConnector } from "./mercadoBitcoin";
 import { getAppSetting, setAppSetting } from "../db";
 
-// More connectors land here as they're implemented.
-// const ibConnector  = ... (Interactive Brokers)
+// More connectors join here as they're implemented.
 // const cedroConnector = ... (Cedro)
 // const btgConnector = ... (BTG)
+// const oandaConnector = ... (Forex)
 
 export const CONNECTORS: Record<string, BrokerConnector> = {
   paper: paperConnector,
   clear: clearConnector,
+  ibkr: ibkrConnector,
+  mercado_bitcoin: mercadoBitcoinConnector,
 };
 
-export type RoutingMode = "paper" | "clear" | "off";
+export type RoutingMode = "off" | "paper" | "clear" | "ibkr" | "mercado_bitcoin";
 
 export async function getRoutingMode(): Promise<RoutingMode> {
   const v = await getAppSetting("ROUTING_MODE");
-  if (v === "paper" || v === "clear" || v === "off") return v;
-  return "off"; // safe default — orders go nowhere unless explicitly enabled
+  if (v === "off" || v === "paper" || v === "clear" || v === "ibkr" || v === "mercado_bitcoin") return v;
+  return "off";
 }
 
 export async function setRoutingMode(mode: RoutingMode): Promise<void> {

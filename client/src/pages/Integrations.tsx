@@ -763,27 +763,30 @@ function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
       <CardContent className="space-y-4">
         <div>
           <Label className="text-sm text-foreground mb-2 block">Modo de roteamento</Label>
-          <div className="grid grid-cols-3 gap-2">
-            {(["off", "paper", "clear"] as const).map((mode) => (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {([
+              ["off", "🔴 Desligado", "Só sinais"],
+              ["paper", "🧪 Paper", "Simulado"],
+              ["clear", "💼 Clear", "B3 real"],
+              ["ibkr", "🌎 IBKR", "Internacional"],
+              ["mercado_bitcoin", "₿ MB", "Crypto BRL"],
+            ] as const).map(([mode, label, hint]) => (
               <button key={mode}
                 onClick={() => setMut.mutate({ routingMode: mode })}
                 disabled={!isAdmin || setMut.isPending}
                 className={`p-3 rounded-lg border text-xs transition-colors ${route === mode ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/30 text-muted-foreground hover:text-foreground"} disabled:opacity-50`}>
-                {mode === "off" && <>🔴 Desligado<br /><span className="text-[10px]">Robôs só geram sinais</span></>}
-                {mode === "paper" && <>🧪 Paper<br /><span className="text-[10px]">Simulado, brapi prices</span></>}
-                {mode === "clear" && <>💼 Clear<br /><span className="text-[10px]">Ordens reais em B3</span></>}
+                {label}<br /><span className="text-[10px]">{hint}</span>
               </button>
             ))}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => testMut.mutate({ broker: "paper" }, {
-            onSuccess: (r) => r.ok ? toast.success(`Paper OK: ${r.message}`) : toast.error(`Paper falhou: ${r.message}`),
-          })}>Testar Paper</Button>
-          <Button size="sm" variant="outline" onClick={() => testMut.mutate({ broker: "clear" }, {
-            onSuccess: (r) => r.ok ? toast.success(`Clear OK: ${r.message}`) : toast.error(`Clear falhou: ${r.message}`),
-          })}>Testar Clear</Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(["paper", "clear", "ibkr", "mercado_bitcoin"] as const).map((b) => (
+            <Button key={b} size="sm" variant="outline" onClick={() => testMut.mutate({ broker: b }, {
+              onSuccess: (r) => r.ok ? toast.success(`${b}: ${r.message}`) : toast.error(`${b}: ${r.message}`),
+            })}>Testar {b}</Button>
+          ))}
         </div>
 
         <div className="border-t border-border pt-3 space-y-3">
@@ -823,7 +826,7 @@ function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
         <div className="p-3 rounded bg-secondary/40 border border-border text-[11px] text-muted-foreground">
           <p className="text-foreground font-medium mb-1">Status atual</p>
           <p>Roteamento: <code className="text-primary">{route}</code> · Kill switch: <code>{killSwitch ? "ON" : "off"}</code> · Por ordem: R$ {perOrderMax} · Por dia: R$ {dailyMax}</p>
-          <p className="mt-1">Conectores instalados: <code>paper</code>, <code>clear</code> (skeleton). Próximos: <code>interactive_brokers</code>, <code>cedro</code>, <code>btg</code>.</p>
+          <p className="mt-1">Conectores instalados: <code>paper</code>, <code>clear</code>, <code>ibkr</code>, <code>mercado_bitcoin</code>. Próximos: <code>cedro</code>, <code>btg</code>, <code>oanda</code> (forex).</p>
         </div>
       </CardContent>
     </Card>

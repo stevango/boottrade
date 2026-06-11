@@ -33,6 +33,7 @@ const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/robots", label: "Robôs", icon: Bot },
   { path: "/portfolio", label: "Carteira", icon: Wallet },
+  { path: "/broker-portfolio", label: "Carteira Broker", icon: Wallet },
   { path: "/goals", label: "Metas", icon: Target },
   { path: "/advisor", label: "Consultor IA", icon: Sparkles },
   { path: "/allocator", label: "Alocação IA", icon: PieChart },
