@@ -851,12 +851,13 @@ function Cell({ label, value, tone }: { label: string; value: string; tone?: "pr
   );
 }
 
-function AdviceRender({ text }: { text: string }) {
+function AdviceRender({ text, assetClass = "sport" }: { text: string; assetClass?: "sport" | "stock" | "crypto" }) {
   const a = parseAdvice(text);
   const decLower = (a.decisao || "").toLowerCase();
+  const isInvestment = assetClass === "stock" || assetClass === "crypto";
   const tone =
-    decLower.startsWith("sim") ? { badge: "bg-profit text-background", border: "border-profit/40", label: "APOSTE" } :
-    decLower.startsWith("nao") || decLower.startsWith("não") ? { badge: "bg-loss text-background", border: "border-loss/40", label: "NÃO APOSTE" } :
+    decLower.startsWith("sim") ? { badge: "bg-profit text-background", border: "border-profit/40", label: isInvestment ? "INVISTA" : "APOSTE" } :
+    decLower.startsWith("nao") || decLower.startsWith("não") ? { badge: "bg-loss text-background", border: "border-loss/40", label: isInvestment ? "NÃO INVISTA" : "NÃO APOSTE" } :
     decLower.includes("caut") ? { badge: "bg-warning text-background", border: "border-warning/40", label: "CAUTELOSO" } :
     { badge: "bg-secondary text-foreground", border: "border-border", label: a.decisao || "—" };
 
@@ -1235,6 +1236,48 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
   );
 }
 
+function StockActionExplainer({ symbol, side, stake, price, assetClass }: { symbol: string; side: "buy" | "sell"; stake: number; price: number; assetClass: "stock" | "crypto" }) {
+  const qty = price > 0 ? Math.floor(stake / price) : 0;
+  const isSell = side === "sell";
+  const isCrypto = assetClass === "crypto";
+  return (
+    <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
+      <p className="text-sm font-medium text-foreground flex items-center gap-2">
+        🎯 O que fazer na prática
+      </p>
+      <div className="space-y-1.5 text-xs text-foreground">
+        {isSell ? (
+          <>
+            <p><strong className="text-loss">VENDA {symbol}</strong> — robô indica tendência de baixa, sai/evita.</p>
+            <p className="text-muted-foreground">📊 Quantidade: <strong className="text-foreground">{qty} {isCrypto ? "unidades" : "ações"}</strong> a R$ {price.toFixed(2)} = aprox <strong>R$ {(qty * price).toFixed(2)}</strong></p>
+            {!isCrypto && (
+              <div className="mt-2 p-2 rounded bg-secondary/40 text-[11px] space-y-1">
+                <p className="text-foreground font-medium">📚 Como interpretar:</p>
+                <p className="text-muted-foreground"><strong className="text-foreground">Tem {symbol}?</strong> Venda agora pra evitar mais perda</p>
+                <p className="text-muted-foreground"><strong className="text-foreground">Não tem?</strong> Ignora — apenas NÃO compra</p>
+                <p className="text-muted-foreground"><strong className="text-warning">Short avançado?</strong> Precisa aluguel de ações (BTC) na corretora — só se você sabe operar</p>
+                <p className="text-muted-foreground"><strong className="text-primary">Modo Paper?</strong> Clica "🧪 Executar via Paper" — simula sem risco</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <p><strong className="text-profit">COMPRA {symbol}</strong> — robô indica tendência de alta.</p>
+            <p className="text-muted-foreground">📊 Quantidade: <strong className="text-foreground">{qty} {isCrypto ? "unidades" : "ações"}</strong> a R$ {price.toFixed(2)} = aprox <strong>R$ {(qty * price).toFixed(2)}</strong></p>
+            <div className="mt-2 p-2 rounded bg-secondary/40 text-[11px] space-y-1">
+              <p className="text-foreground font-medium">📚 Como executar:</p>
+              <p className="text-muted-foreground">1. Abre sua corretora (XP, Clear, etc) {isCrypto && "/ Mercado Bitcoin"}</p>
+              <p className="text-muted-foreground">2. Procura {symbol}</p>
+              <p className="text-muted-foreground">3. Compra {qty} {isCrypto ? "unidades" : "ações"} a mercado</p>
+              <p className="text-muted-foreground">4. Define stop loss em -5% ({(price * 0.95).toFixed(2)}) pra proteção</p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StockAdvisorButton({ decisionId, symbol, side, confidence, bestPrice, reasoning, assetClass }:
   { decisionId: number; symbol: string; side: "buy" | "sell"; confidence: number; bestPrice: number; reasoning: string; assetClass: "stock" | "crypto" }) {
   const mut = trpc.stockAdvise.advise.useMutation();
@@ -1278,7 +1321,8 @@ function StockAdvisorButton({ decisionId, symbol, side, confidence, bestPrice, r
                 expectedReturnBrl: 0,
                 bullets: mut.data.intelligence.bullets,
               }} />
-              <AdviceRender text={mut.data.advice} />
+              <AdviceRender text={mut.data.advice} assetClass={assetClass} />
+              <StockActionExplainer symbol={symbol} side={side} stake={mut.data.intelligence.recommendedStakeBrl} price={bestPrice} assetClass={assetClass} />
             </div>
           )}
         </DialogContent>
