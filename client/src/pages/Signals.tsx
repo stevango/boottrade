@@ -1205,8 +1205,55 @@ function SignalRow({ s, hasAdvice, onMark, onAnalyze }: { s: Signal; hasAdvice?:
               <BarChart2 className="w-3 h-3 mr-1" /> Analisar partida
             </Button>
           )}
+          {/* Non-sports signals (Athena B3, Kraken crypto) have no match
+              analysis flow. Show a direct OMS button so the user can route
+              the order in one click. */}
+          {!ctx && isPending && (() => {
+            const parts = s.asset.split("|").map((p) => p.trim());
+            const symbol = parts[0];
+            const sideRaw = (parts[2] ?? "").toLowerCase();
+            const isExecutable = /^[A-Z0-9]{4,7}$/.test(symbol);
+            if (!isExecutable) return null;
+            const side: "BUY" | "SELL" = sideRaw === "sell" ? "SELL" : "BUY";
+            return <DirectOmsButton symbol={symbol} side={side} decisionId={s.id} />;
+          })()}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function DirectOmsButton({ symbol, side, decisionId }: { symbol: string; side: "BUY" | "SELL"; decisionId: number }) {
+  const cfg = trpc.oms.config.useQuery();
+  const placeMut = trpc.oms.placeManual.useMutation();
+  const [result, setResult] = useState<any>(null);
+  const route = cfg.data?.routingMode ?? "off";
+  const perOrder = cfg.data?.maxPerOrderBrl ?? 100;
+  if (route === "off") return null;
+
+  const submit = () => {
+    placeMut.mutate({ symbol, side, stake: perOrder }, {
+      onSuccess: (r) => {
+        setResult(r);
+        if (r.ok) toast.success(`Ordem ${side} ${symbol} enviada via ${r.route} — ${r.filledQuantity} unid${r.averagePrice ? ` @ R$ ${r.averagePrice.toFixed(2)}` : ""}`);
+        else toast.error(r.reason);
+      },
+      onError: (e) => { setResult({ ok: false, reason: e.message }); toast.error(e.message); },
+    });
+  };
+
+  if (result?.ok) {
+    return <span className="text-[11px] text-profit flex items-center gap-1">✓ Enviada @ R$ {result.averagePrice?.toFixed(2) ?? "?"}</span>;
+  }
+  if (result && !result.ok) {
+    return <span className="text-[11px] text-loss flex items-center gap-1" title={result.reason}>⚠ {result.reason.slice(0, 40)}...</span>;
+  }
+
+  const label = route === "paper" ? "🧪 Executar via Paper" : `🎯 Executar via ${route.toUpperCase()}`;
+  return (
+    <Button size="sm" variant="ghost" className={`text-[11px] ${route === "paper" ? "text-primary hover:bg-primary/10" : "text-warning hover:bg-warning/10"}`}
+      onClick={submit} disabled={placeMut.isPending}>
+      {placeMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null} {label} (R$ {perOrder})
+    </Button>
   );
 }
