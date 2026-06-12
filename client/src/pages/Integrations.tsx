@@ -29,9 +29,9 @@ const ROBOT_MAP = {
 
 type SecretKey = "ODDS_API_KEY" | "ODDS_IO_API_KEY" | "API_FOOTBALL_KEY" | "OPENAI_API_KEY" | "BRAPI_TOKEN";
 
-type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key" | "clientId" | "clientSecret" | "account" | "sessionToken";
+type FieldName = "apiKey" | "apiSecret" | "appKey" | "username" | "password" | "cert" | "key" | "clientId" | "clientSecret" | "account" | "sessionToken" | "softwareKey";
 type Field = { name: FieldName; optional?: boolean; multiline?: boolean };
-type ConnectableId = "binance" | "betfair" | "clear" | "ibkr" | "mercado_bitcoin";
+type ConnectableId = "binance" | "betfair" | "clear" | "cedro" | "ibkr" | "mercado_bitcoin";
 type Connectable = { id: ConnectableId; name: string; logo: string; desc: string; usedBy: string[]; fields: Field[]; note?: string; docsUrl?: string; docsLabel?: string };
 
 const CONNECTABLES: Connectable[] = [
@@ -52,6 +52,12 @@ const CONNECTABLES: Connectable[] = [
     fields: [{ name: "clientId" }, { name: "clientSecret" }, { name: "account", optional: true }],
     note: "Após aprovação na Clear, cole o clientId e clientSecret recebidos. Account é o número da sua conta Clear (ex: 123456) — usado pra rotear ordens ao escritório correto se você opera mais de uma conta.",
     docsUrl: "https://devs.clear.com.br", docsLabel: "Doc Clear Smart Trader API" },
+  { id: "cedro", name: "Cedro Technologies (Roteador B3)", logo: "🔗",
+    desc: "Roteador de ordens que conecta plataformas externas a corretoras BR (Clear, XP, BTG, etc.). Self-service: cadastra em cedrotech.com → contrata roteamento → autoriza Cedro na página de Roteamento da corretora. Aceita ordens via REST/WebSocket — caminho mais rápido pra automatizar a Clear.",
+    usedBy: ["Athena AI (B3)", "OMS (roteamento B3)"],
+    fields: [{ name: "username" }, { name: "password" }, { name: "softwareKey" }, { name: "account", optional: true }],
+    note: "Username/password são do cadastro em cedrotech.com (não da Clear). SoftwareKey é a chave do aplicativo emitida quando você contrata roteamento. Account é o número da sua conta na corretora roteada (ex: número Clear).",
+    docsUrl: "https://www.cedrotech.com/", docsLabel: "Cedro Technologies" },
   { id: "ibkr", name: "Interactive Brokers (Internacional)", logo: "🌎",
     desc: "Acesso a NYSE, Nasdaq, Forex, Futuros — Client Portal API. Precisa renovar o token de sessão diariamente fazendo login em clientportal.gw.interactivebrokers.com.",
     usedBy: ["OMS (roteamento internacional)"],
@@ -273,7 +279,7 @@ export default function Integrations() {
 
         {/* Corretoras com API pra execução */}
         <Section title="Corretoras (Execução automatizada)" icon={Landmark}>
-          {(["clear", "ibkr"] as const).map((id) => {
+          {(["clear", "cedro", "ibkr"] as const).map((id) => {
             const c = CONNECTABLES.find((x) => x.id === id);
             if (!c) return null;
             if (isConnected(c.id)) return <NoteAlready key={c.id} name={c.name} />;
@@ -782,18 +788,20 @@ function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Onde as ordens dos robôs vão. <strong>Paper</strong> = simula contra preços brapi sem dinheiro real (use pra testar).
-          <strong> Clear</strong> = envia ordens reais via API Clear (precisa credenciais aprovadas).
+          <strong> Clear</strong> = envia ordens diretas via API Clear (precisa credenciais aprovadas).
+          <strong> Cedro</strong> = roteamento via Cedro Technologies (caminho self-service pra Clear/XP/BTG, mais rápido pra ativar).
           <strong> Desligado</strong> = robôs geram sinais mas ninguém executa.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
           <Label className="text-sm text-foreground mb-2 block">Modo de roteamento</Label>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
             {([
               ["off", "🔴 Desligado", "Só sinais"],
               ["paper", "🧪 Paper", "Simulado"],
-              ["clear", "💼 Clear", "B3 real"],
+              ["clear", "💼 Clear", "B3 direto"],
+              ["cedro", "🔗 Cedro", "B3 roteado"],
               ["ibkr", "🌎 IBKR", "Internacional"],
               ["mercado_bitcoin", "₿ MB", "Crypto BRL"],
             ] as const).map(([mode, label, hint]) => (
@@ -808,7 +816,7 @@ function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {(["paper", "clear", "ibkr", "mercado_bitcoin"] as const).map((b) => (
+          {(["paper", "clear", "cedro", "ibkr", "mercado_bitcoin"] as const).map((b) => (
             <Button key={b} size="sm" variant="outline" onClick={() => testMut.mutate({ broker: b }, {
               onSuccess: (r) => r.ok ? toast.success(`${b}: ${r.message}`) : toast.error(`${b}: ${r.message}`),
             })}>Testar {b}</Button>
@@ -852,7 +860,7 @@ function OmsRoutingCard({ isAdmin }: { isAdmin: boolean }) {
         <div className="p-3 rounded bg-secondary/40 border border-border text-[11px] text-muted-foreground">
           <p className="text-foreground font-medium mb-1">Status atual</p>
           <p>Roteamento: <code className="text-primary">{route}</code> · Kill switch: <code>{killSwitch ? "ON" : "off"}</code> · Por ordem: R$ {perOrderMax} · Por dia: R$ {dailyMax}</p>
-          <p className="mt-1">Conectores instalados: <code>paper</code>, <code>clear</code>, <code>ibkr</code>, <code>mercado_bitcoin</code>. Próximos: <code>cedro</code>, <code>btg</code>, <code>oanda</code> (forex).</p>
+          <p className="mt-1">Conectores instalados: <code>paper</code>, <code>clear</code>, <code>cedro</code>, <code>ibkr</code>, <code>mercado_bitcoin</code>. Próximos: <code>btg</code>, <code>oanda</code> (forex).</p>
         </div>
       </CardContent>
     </Card>
@@ -1013,6 +1021,7 @@ function labelFor(f: string): string {
     cert: "Certificado cliente (PEM)", key: "Chave privada do certificado (PEM)",
     clientId: "Client ID", clientSecret: "Client Secret",
     account: "Número da conta", sessionToken: "Session Token",
+    softwareKey: "Software Key (Cedro)",
   } as Record<string, string>)[f] ?? f;
 }
 function placeholderFor(f: string): string {
@@ -1026,5 +1035,6 @@ function placeholderFor(f: string): string {
     clientSecret: "Client Secret recebido (não compartilhe)",
     account: "ex: 123456 ou U1234567",
     sessionToken: "Cookie api=... do Client Portal",
+    softwareKey: "Chave do aplicativo emitida pela Cedro",
   } as Record<string, string>)[f] ?? "";
 }

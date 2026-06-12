@@ -9,11 +9,12 @@ import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
 
-type Broker = "paper" | "clear" | "ibkr" | "mercado_bitcoin";
+type Broker = "paper" | "clear" | "cedro" | "ibkr" | "mercado_bitcoin";
 
 const BROKER_LABELS: Record<Broker, string> = {
   paper: "🧪 Paper Trading",
   clear: "💼 Clear",
+  cedro: "🔗 Cedro (roteamento)",
   ibkr: "🌎 Interactive Brokers",
   mercado_bitcoin: "₿ Mercado Bitcoin",
 };

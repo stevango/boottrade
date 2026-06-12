@@ -880,6 +880,18 @@ export async function syncBrokerConnection(userId: number, id: number) {
       return { success: true, count: 1 };
     }
 
+    if (conn.broker === "cedro") {
+      const { cedroConnector } = await import("./brokers/cedro");
+      const test = await cedroConnector.testConnection();
+      if (!test.ok) throw new Error(test.message);
+      await db.update(brokerConnections).set({
+        status: "connected",
+        lastSync: new Date(),
+        syncData: JSON.stringify({ note: test.message, syncedAt: Date.now() }),
+      }).where(scope);
+      return { success: true, count: 1 };
+    }
+
     // Live sync not yet available for this broker (traditional brokers need
     // Open Finance / partner integration). Mark synced with an informative note.
     await db.update(brokerConnections).set({
